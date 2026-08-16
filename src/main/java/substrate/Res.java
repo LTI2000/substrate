@@ -11,7 +11,7 @@ public enum Res {
     MATTER      ("Matter",       new Color(0xDB, 0xE9, 0xF5), null),
     IRON_ORE    ("Iron ore",     new Color(0x9F, 0xB4, 0xC9), "Fe"),
     COPPER_ORE  ("Copper ore",   new Color(0xE0, 0x8A, 0x4F), "Cu"),
-    COAL        ("Coal",         new Color(0x8D, 0x95, 0xA3), "C"),
+    COAL        ("Coal",         new Color(0x4A, 0x4F, 0x56), "C"),
     TITANIUM_ORE("Titanium ore", new Color(0xB3, 0x9F, 0xF0), "Ti"),
     URANIUM_ORE ("Uranium ore",  new Color(0x7F, 0xE0, 0x8A), "U"),
     IRON        ("Iron",         new Color(0x9F, 0xB4, 0xC9), null),
