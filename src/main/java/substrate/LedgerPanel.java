@@ -8,7 +8,11 @@ import java.util.List;
 
 /**
  * The stock ledger across the top: power first, then everything discovered. Lays itself out in a
- * responsive grid of fixed-size cells, wrapping to as many rows as needed for the current width.
+ * fixed grid of fixed-size cells — a constant column count, not one computed from the panel's
+ * live width — wrapping to as many rows as the (also fixed) column count needs. There is no
+ * {@link LayoutManager} involved anywhere in this UI: {@code Game} gives this panel
+ * one explicit {@code setBounds} rect and never touches it again, so the grid math below only
+ * ever needs to answer "where does cell N go," not "how much room do I have this time."
  */
 public final class LedgerPanel extends JComponent {
 
@@ -22,6 +26,12 @@ public final class LedgerPanel extends JComponent {
     private final Engine engine;
     /** Fixed cell dimensions the grid layout is built from. */
     private static final int CELL_W = 128, CELL_H = 44;
+    /**
+     * Fixed column count: {@link Res} has 12 constants plus the Power cell always shown first,
+     * so 6 columns comfortably covers every resource ever discovered in 3 rows without the grid
+     * needing to know how wide its container is.
+     */
+    private static final int COLS = 6;
 
     /** @param engine simulation to read power and resource state from */
     public LedgerPanel(Engine engine) {
@@ -50,18 +60,16 @@ public final class LedgerPanel extends JComponent {
         return out;
     }
 
-    /** @return how many {@link #CELL_W}-wide columns fit in the current width, at least 1. */
-    private int columns() { return Math.max(1, Math.min(cells().size(), getWidth() / CELL_W)); }
-
     /**
-     * Reports a height tall enough for every cell, wrapped across the current width — Swing uses
-     * this to reserve layout space before {@link #paintComponent} runs.
+     * Reports a size tall enough for every cell at the fixed {@link #COLS} column count. Nothing
+     * in this UI consults a component's preferred size to lay it out — {@code Game} sets this
+     * panel's bounds once via {@code setBounds} — but the method stays for the same reason
+     * {@link Group#fusionFactor} keeps its own doc even though its caller could inline the
+     * formula: it's the one place the "how tall does the ledger need to be" answer lives.
      */
     @Override public Dimension getPreferredSize() {
-        int count = cells().size();
-        int cols = Math.max(1, Math.min(count, (getWidth() > 0 ? getWidth() : 900) / CELL_W));
-        int rows = (int) Math.ceil(count / (double) cols);
-        return new Dimension(300, Math.max(CELL_H, rows * CELL_H));
+        int rows = (int) Math.ceil(cells().size() / (double) COLS);
+        return new Dimension(COLS * CELL_W, Math.max(CELL_H, rows * CELL_H));
     }
 
     /** Paints the paper background and every cell's border, key, value, and note text. */
@@ -69,7 +77,7 @@ public final class LedgerPanel extends JComponent {
         var g = (Graphics2D) graphics;
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         var list = cells();
-        int cols = columns();
+        int cols = COLS;
         double cw = getWidth() / (double) cols;
         int rows = (int) Math.ceil(list.size() / (double) cols);
         g.setColor(Theme.PAPER);

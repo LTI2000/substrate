@@ -33,6 +33,14 @@ public final class ItemRow extends JComponent {
 
     private static final Font TITLE = Theme.mono(12);
     private static final Font SMALL = Theme.mono(10);
+    /**
+     * Fixed row width, matching the side panel tabs' fixed content width ({@code
+     * Game.TAB_CONTENT_W}). There is no {@link javax.swing.LayoutManager} anywhere in this UI —
+     * every component gets an explicit {@code setBounds} call computed once, rather than a
+     * container reflowing children off their preferred sizes — so a row's width is this
+     * constant, not something read live off a dynamically-sized parent.
+     */
+    private static final int WIDTH = 330;
 
     private final Model model;
     /** Whether the mouse is currently over the row; drives the hover highlight. */
@@ -54,31 +62,25 @@ public final class ItemRow extends JComponent {
         });
     }
 
-    /** Stable width estimate: the enclosing list is laid out before the rows are measured. */
-    private int width() {
-        int parent = getParent() != null ? getParent().getWidth() - 20 : 0;
-        if (parent > 60) return parent;
-        return getWidth() > 60 ? getWidth() : 300;
-    }
+    /** Text column width: {@link #WIDTH} minus fixed left/right padding, with a floor so wrapping never collapses to nothing. */
+    private int textWidth() { return Math.max(80, WIDTH - 16); }
 
-    /** Text column width: the row width minus fixed left/right padding, with a floor so wrapping never collapses to nothing. */
-    private int textWidth() { return Math.max(80, width() - 16); }
-
-    /** Computed from the wrapped line counts of {@link Model#io()} and {@link Model#blurb()}, plus a cost line unless {@link Model#done()}. */
+    /**
+     * Computed from the wrapped line counts of {@link Model#io()} and {@link Model#blurb()},
+     * plus a cost line unless {@link Model#done()}. The caller ({@code Game.positionTechRows})
+     * calls this once to size the row's {@code setBounds} rect and never again unless the
+     * underlying tech's done-state changes and everything gets repositioned from scratch — there
+     * is no live resizing in response to this component's own size changing, since it never does.
+     */
     @Override public Dimension getPreferredSize() {
-        int w = width();
-        if (w < 0) w = 300;
         var fmSmall = getFontMetrics(SMALL);
         int lines = 0;
         if (!model.done()) lines++;                                  // cost
         lines += Ui.wrap(model.io(), fmSmall, textWidth()).size();
         lines += Ui.wrap(model.blurb(), fmSmall, textWidth()).size();
         int h = 8 + getFontMetrics(TITLE).getHeight() + lines * (fmSmall.getHeight() - 1) + 6;
-        return new Dimension(w, h);
+        return new Dimension(WIDTH, h);
     }
-
-    /** Unbounded width, fixed height: lets the row stretch to fill a vertical list while keeping its own computed height. */
-    @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
 
     /** Draws the row: background/border, title and meta, the cost line (if not done), then the io and blurb text wrapped to width. */
     @Override protected void paintComponent(Graphics graphics) {

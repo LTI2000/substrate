@@ -7,6 +7,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -17,6 +18,24 @@ import java.util.function.BooleanSupplier;
  * and hovers back into engine calls. This is the only class that knows how the simulation is
  * laid out on screen; everything downstream ({@link BoardPanel}, {@link LedgerPanel}, {@link
  * ItemRow}, ...) is a dumb view driven from here.
+ *
+ * <p><b>Every component is placed with an explicit {@code setBounds} rect, computed once, from
+ * fixed constants.</b> There is no {@link LayoutManager} anywhere in this class — no {@link
+ * BorderLayout}, {@link BoxLayout}, {@link GridLayout}, {@link FlowLayout}, or {@link
+ * CardLayout} — and the window itself is fixed-size and not resizable (see {@link Main}), so
+ * there is never a "reflow when the container's size changes" case to handle. {@link #root()}
+ * and {@link #side()} lay out their children from hand-picked constants (the block right after
+ * this Javadoc); {@link #buildTab()} does the same for a fixed-size, non-scrolling page since
+ * its ~22 items are known to fit; {@link #techTab()} positions {@link ItemRow}s with a simple
+ * "sum of preceding heights" loop ({@link #positionTechRows()}) since the research list doesn't
+ * fit and needs a scrollbar — the one piece of Swing's built-in scrolling machinery kept, since
+ * panning a fixed-size, statically-positioned canvas isn't the kind of dynamic layout this is
+ * about avoiding. Both mechanisms replace an earlier version built on {@code BoxLayout} +
+ * {@code GridLayout} + {@code FlowLayout} + {@code CardLayout}, which chased a run of
+ * hard-to-predict bugs around stale cached preferred sizes, {@code revalidate()} timing, and
+ * cells stretching to fill a container they weren't supposed to — the entire class of bug this
+ * rewrite exists to rule out by construction: nothing here is ever asked "what size do you want
+ * to be," so nothing can answer that question incorrectly.
  *
  * <p>Nothing in the BUILD or RESEARCH tabs is backed by a proper view-model class. The RESEARCH
  * tab's rows and the BUILD tab's single detail row are each a fresh anonymous {@link
@@ -30,6 +49,40 @@ import java.util.function.BooleanSupplier;
  */
 public final class Game implements BoardPanel.Handler {
 
+    // -- Fixed window/panel geometry. Every number below is load-bearing: it is the only place
+    // a given dimension is decided, and every setBounds call in this file traces back to one of
+    // these rather than to a live-measured parent size. --
+    /** Whole window content size; {@link Main} packs the frame to exactly this and disables resizing. */
+    static final int WIN_W = 1180, WIN_H = 860;
+    /** Outer margins around the window content. */
+    private static final int MARGIN_L = 14, MARGIN_T = 12, MARGIN_R = 14, MARGIN_B = 14;
+    /** Gap between stacked/side-by-side blocks. */
+    private static final int GAP = 10;
+    /** Side (tabbed) panel width, and the height it gets (the full content height). */
+    private static final int SIDE_W = 354, SIDE_H = WIN_H - MARGIN_T - MARGIN_B;
+    /** Left column width: whatever's left after the side panel and the gap between them. */
+    private static final int LEFT_W = WIN_W - MARGIN_L - MARGIN_R - SIDE_W - GAP;
+    /** Header (masthead + SAVE/ABANDON) row height. */
+    private static final int HEADER_H = 34;
+    /** Ledger size: {@link LedgerPanel}'s own fixed column count times its fixed cell size. */
+    private static final int LEDGER_W = 768, LEDGER_H = 132;
+    /** Status bar height. */
+    private static final int STATUS_H = 26;
+    /** Board area height; its width is {@link #LEFT_W} and it centers its square grid within that itself. */
+    private static final int BOARD_H = SIDE_H - HEADER_H - GAP - LEDGER_H - GAP - GAP - STATUS_H;
+    /** Tab button row height, and the gap below it before tab content starts. */
+    private static final int TAB_ROW_H = 30, TAB_GAP = 4;
+    /** Fixed inner padding and content width shared by every tab page. */
+    static final int TAB_PAD = 12, TAB_CONTENT_W = SIDE_W - TAB_PAD * 2;
+    /**
+     * Fixed height for the rotating hint box. {@link #hintText()}'s longest tip wraps to about
+     * five lines at {@link #TAB_CONTENT_W}; this is sized to comfortably fit that, with slack
+     * left blank for every shorter tip — the same "generous fixed box" choice {@link
+     * #buildTab()}'s detail-card height-probe makes, picked by hand here instead of probed
+     * since {@link #hintText()}'s candidate strings aren't exposed as an enumerable list.
+     */
+    private static final int HINT_H = 84;
+
     /** The simulation this UI is wired to; owns the board and all game rules. */
     private final Engine engine;
     /** The grid view: renders machines, takes clicks/hover and reports them via {@link BoardPanel.Handler}. */
@@ -41,30 +94,33 @@ public final class Game implements BoardPanel.Handler {
     /** Rotating gameplay tip shown above the build list; see {@link #hintText()}. */
     private final HintBox hint;
     /**
-     * The BUILD tab's detail card; kept as a field (rather than a local in {@link #buildTab()},
-     * like {@link MachineIcon} tiles) so {@link #refresh()} can {@code revalidate()} it — its
-     * preferred size depends on {@code selected}, unlike every other row/tile on this tab, whose
-     * size is fixed regardless of state.
+     * The BUILD tab's detail card. Kept as a field (rather than a local in {@link #buildTab()},
+     * like {@link MachineIcon} tiles) so {@link #refresh()} can repaint it after a pick changes
+     * which machine it shows. Unlike the version of this card that existed before this class
+     * dropped every {@link LayoutManager}, its bounds are fixed once at construction (see {@link
+     * #buildTab()}'s height-probing loop) and never recomputed — selecting a different machine
+     * only ever changes what gets painted inside the same rectangle.
      */
     private final MachineDetail detail;
-    /** Card-switches between the BUILD, RESEARCH and MANUAL side-panel tabs. */
-    private final JPanel cards = new JPanel(new CardLayout());
+    /**
+     * The three BUILD/RESEARCH/MANUAL tab bodies, keyed by tab name — the whole replacement for
+     * a {@link CardLayout} deck. All three are added to the side panel at the same fixed bounds
+     * and given fixed size (see {@link #side()}); {@link #showTab(String)} just flips {@link
+     * JComponent#setVisible} on each instead of asking a layout manager to swap cards.
+     */
+    private final Map<String, JComponent> tabPanels = new LinkedHashMap<>();
     /** The three tab buttons (BUILD/RESEARCH/MANUAL), kept so {@link #showTab(String)} can toggle their active state. */
     private final List<TabButton> tabs = new ArrayList<>();
-    /**
-     * Research rows keyed by tech, so {@link #refresh()} can find a just-completed row and move
-     * it from {@link #unfinishedTechs} to {@link #finishedTechs}.
-     */
+    /** Research rows keyed by tech, read by {@link #positionTechRows()} to look up each row's current height. */
     private final Map<Tech, ItemRow> techRows = new EnumMap<>(Tech.class);
-    /** Research rows not yet completed, in the RESEARCH tab above the {@link #finishedLabel} divider. */
-    private final JPanel unfinishedTechs = new JPanel();
     /**
-     * Completed research rows, below the {@link #finishedLabel} divider. Only ever grows —
-     * research can't be undone — so {@link #refresh()} just moves a row here once and never
-     * moves it back.
+     * The RESEARCH tab's scrollable content panel (null layout, positioned by {@link
+     * #positionTechRows()}), kept as a field so {@link #refresh()} and {@link #abandon()} can
+     * call that method again — a full recompute is simpler and more robust than trying to move
+     * just the one row that changed (see {@link #positionTechRows()}'s Javadoc).
      */
-    private final JPanel finishedTechs = new JPanel();
-    /** Divider between {@link #unfinishedTechs} and {@link #finishedTechs}; hidden until the first tech completes. */
+    private JPanel researchContent;
+    /** Divider between not-yet-researched and completed rows in the RESEARCH tab; hidden until the first tech completes. */
     private final SectionLabel finishedLabel = new SectionLabel("Completed");
     /** The in-game manual/log panel shown under the MANUAL tab. */
     private final Manual manual;
@@ -98,13 +154,15 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Builds the full window content: gradient/grid backdrop, masthead and SAVE/ABANDON buttons
-     * up top, the board and status bar on the left, the ledger below the header, and the tabbed
-     * side panel on the right. Also binds keyboard shortcuts and does the first {@link #refresh()}.
+     * up top, the ledger below that, the board and status bar below that, and the tabbed side
+     * panel to the right — every one of them placed with an explicit {@code setBounds} call
+     * computed from the constants at the top of this class, not a {@link LayoutManager}. Also
+     * binds keyboard shortcuts and does the first {@link #refresh()}.
      *
      * @return the assembled root component, ready to drop into a frame
      */
     public JComponent root() {
-        var root = new JPanel(new BorderLayout(10, 10)) {
+        var root = new JPanel(null) {
             @Override protected void paintComponent(Graphics g) {
                 var g2 = (Graphics2D) g;
                 g2.setPaint(new GradientPaint(0, 0, new Color(0x24, 0x1C, 0x10), getWidth(), getHeight(), Theme.INK));
@@ -114,33 +172,42 @@ public final class Game implements BoardPanel.Handler {
                 for (int y = 0; y < getHeight(); y += 40) g2.drawLine(0, y, getWidth(), y);
             }
         };
-        root.setBorder(BorderFactory.createEmptyBorder(12, 14, 14, 14));
+        root.setPreferredSize(new Dimension(WIN_W, WIN_H));
 
-        var head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.add(new Masthead(), BorderLayout.CENTER);
-        var buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
-        buttons.add(new Ui.Chip("SAVE", () -> {
+        var masthead = new Masthead();
+        masthead.setBounds(MARGIN_L, MARGIN_T, LEFT_W, HEADER_H);
+        root.add(masthead);
+
+        // SAVE/ABANDON are measured and placed right-to-left off the header row's right edge —
+        // a one-time getPreferredSize() probe, not a live layout dependency, since neither
+        // chip's text (and so its width) ever changes after construction.
+        var save = new Ui.Chip("SAVE", () -> {
             Save.write(engine.board);
             status.set(List.of(Ui.Seg.of("Site saved.", Theme.GOOD)));
-        }));
-        buttons.add(new Ui.Chip("ABANDON SITE", this::abandon));
-        head.add(buttons, BorderLayout.EAST);
+        });
+        var abandonChip = new Ui.Chip("ABANDON SITE", this::abandon);
+        Dimension saveSize = save.getPreferredSize(), abandonSize = abandonChip.getPreferredSize();
+        int buttonY = MARGIN_T + (HEADER_H - abandonSize.height) / 2;
+        int rightEdge = MARGIN_L + LEFT_W;
+        abandonChip.setBounds(rightEdge - abandonSize.width, buttonY, abandonSize.width, abandonSize.height);
+        save.setBounds(abandonChip.getX() - 6 - saveSize.width, buttonY, saveSize.width, saveSize.height);
+        root.add(save);
+        root.add(abandonChip);
 
-        var north = new JPanel(new BorderLayout(0, 10));
-        north.setOpaque(false);
-        north.add(head, BorderLayout.NORTH);
-        north.add(ledger, BorderLayout.SOUTH);
+        int ledgerY = MARGIN_T + HEADER_H + GAP;
+        ledger.setBounds(MARGIN_L, ledgerY, LEDGER_W, LEDGER_H);
+        root.add(ledger);
 
-        var left = new JPanel(new BorderLayout(0, 0));
-        left.setOpaque(false);
-        left.add(boardPanel, BorderLayout.CENTER);
-        left.add(status, BorderLayout.SOUTH);
+        int boardY = ledgerY + LEDGER_H + GAP;
+        boardPanel.setBounds(MARGIN_L, boardY, LEFT_W, BOARD_H);
+        root.add(boardPanel);
 
-        root.add(north, BorderLayout.NORTH);
-        root.add(left, BorderLayout.CENTER);
-        root.add(side(), BorderLayout.EAST);
+        status.setBounds(MARGIN_L, boardY + BOARD_H + GAP, LEFT_W, STATUS_H);
+        root.add(status);
+
+        var sidePanel = side();
+        sidePanel.setBounds(WIN_W - MARGIN_R - SIDE_W, MARGIN_T, SIDE_W, SIDE_H);
+        root.add(sidePanel);
 
         bindKeys(root);
         refresh();
@@ -151,13 +218,15 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the right-hand tabbed panel: the BUILD/RESEARCH/MANUAL tab row on top of a
-     * {@link CardLayout} deck holding the three tab bodies. Starts on the BUILD tab.
+     * Builds the right-hand tabbed panel: three {@link TabButton}s side by side, and the three
+     * tab bodies stacked on top of one another underneath at identical fixed bounds — the whole
+     * replacement for a {@link CardLayout} deck, with {@link #showTab(String)} toggling {@link
+     * JComponent#setVisible} instead of asking a layout manager to swap cards. Starts on BUILD.
      *
      * @return the side panel component
      */
     private JComponent side() {
-        var panel = new JPanel(new BorderLayout()) {
+        var panel = new JPanel(null) {
             @Override protected void paintComponent(Graphics g) {
                 var g2 = (Graphics2D) g;
                 g2.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x1E, 0x17, 0x0E)));
@@ -166,24 +235,35 @@ public final class Game implements BoardPanel.Handler {
                 g2.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
             }
         };
-        panel.setPreferredSize(new Dimension(354, 100));
 
-        var tabRow = new JPanel(new GridLayout(1, 3));
-        tabRow.setOpaque(false);
-        for (String name : List.of("BUILD", "RESEARCH", "MANUAL")) {
+        List<String> names = List.of("BUILD", "RESEARCH", "MANUAL");
+        int tabW = SIDE_W / names.size();
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
             var tab = new TabButton(name, () -> showTab(name));
             tabs.add(tab);
-            tabRow.add(tab);
+            // The last tab absorbs the rounding remainder so the row's total width is exactly
+            // SIDE_W instead of leaving a sliver of unpainted panel past the third tab.
+            int w = (i == names.size() - 1) ? SIDE_W - tabW * i : tabW;
+            tab.setBounds(tabW * i, 0, w, TAB_ROW_H);
+            panel.add(tab);
         }
         tabs.get(0).active = true;
 
-        cards.setOpaque(false);
-        cards.add(buildTab(), "BUILD");
-        cards.add(techTab(), "RESEARCH");
-        cards.add(Ui.scroll(manual), "MANUAL");
+        int contentY = TAB_ROW_H + TAB_GAP;
+        int contentH = SIDE_H - contentY;
+        tabPanels.put("BUILD", buildTab());
+        tabPanels.put("RESEARCH", techTab());
+        var manualPanel = Ui.scroll(manual);
+        manualPanel.setOpaque(false);
+        tabPanels.put("MANUAL", manualPanel);
+        for (JComponent p : tabPanels.values()) {
+            p.setBounds(0, contentY, SIDE_W, contentH);
+            panel.add(p);
+        }
+        tabPanels.get("RESEARCH").setVisible(false);
+        tabPanels.get("MANUAL").setVisible(false);
 
-        panel.add(tabRow, BorderLayout.NORTH);
-        panel.add(cards, BorderLayout.CENTER);
         return panel;
     }
 
@@ -191,39 +271,40 @@ public final class Game implements BoardPanel.Handler {
      * Builds the BUILD tab: the hint box, a small row of {@link ToolIcon} tiles (Dismantle,
      * Power Switch), a grid of one {@link MachineIcon} per buildable {@link Machine}, and a
      * single {@link MachineDetail} card beneath it showing full detail for whichever machine is
-     * currently {@link #selected}.
+     * currently {@link #selected} — every one of them placed with an explicit {@code setBounds}
+     * call as a running {@code y} cursor walks down the tab, rather than a {@link BoxLayout}
+     * stacking them off their preferred sizes. This tab doesn't scroll: unlike RESEARCH's ~26
+     * rows, its fixed ~22 items (2 tools + 20 machines + 1 detail card) are known in advance to
+     * fit inside {@code SIDE_H}, so there's no scrollable-extent bookkeeping to do at all.
      *
-     * <p>Unlike the old one-{@link ItemRow}-per-machine layout, every icon is always present
-     * (never hidden as tech unlocks) — a locked or unaffordable one just paints itself dimmed,
-     * since {@link MachineIcon#paintComponent} reads {@code engine} live on every repaint. That
-     * sidesteps the reflow problem a variable-length visible list would have: with a fixed
-     * {@link GridLayout} there is no gap to leave behind when an icon "hides."
+     * <p>Every icon is always present (never hidden as tech unlocks) — a locked or unaffordable
+     * one just paints itself dimmed, since {@link MachineIcon#paintComponent} reads {@code
+     * engine} live on every repaint. Selecting a locked machine still shows its cost and "needs
+     * X" requirement in the detail card, even though it can't be armed for placement — see
+     * {@link #pickMachine}.
      *
-     * <p>Selecting a locked machine still shows its cost and "needs X" requirement in the detail
-     * card, even though it can't be armed for placement — see {@link #pickMachine}.
-     *
-     * @return the scrollable BUILD tab body
+     * @return the BUILD tab body
      */
     private JComponent buildTab() {
-        var list = new JPanel();
-        list.setOpaque(false);
-        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        list.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        list.add(hint);
-        list.add(Box.createVerticalStrut(6));
+        var panel = new JPanel(null);
+        panel.setOpaque(false);
+        int y = TAB_PAD;
 
-        list.add(new SectionLabel("Tools"));
-        // FlowLayout, not GridLayout: with only two tiles a GridLayout would stretch each one to
-        // half the panel's width, turning them into wide rectangles instead of small square
-        // icons. FlowLayout leaves them at their own preferred size and just left-aligns them,
-        // with unused width as blank space — a toolbar of small icons, not a stretched bar.
-        var tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        tools.setOpaque(false);
+        hint.setBounds(TAB_PAD, y, TAB_CONTENT_W, HINT_H);
+        panel.add(hint);
+        y += HINT_H + 6;
+
+        var toolsLabel = new SectionLabel("Tools");
+        toolsLabel.setBounds(TAB_PAD, y, TAB_CONTENT_W, 20);
+        panel.add(toolsLabel);
+        y += 20;
+
         // Dismantle and Power Switch used to be full-width ItemRows with their own title/cost/
         // blurb text; that's a lot of vertical space for two toggles with no per-machine detail
         // to show. As ToolIcon tiles their description moves to a hover tooltip instead — see
         // ToolIcon's Javadoc for why that trade (discoverable on hover, invisible otherwise) was
         // fine here specifically.
+        int toolSize = 74, toolGap = 6;
         var demolishIcon = new ToolIcon("DISM", Game::paintDismantleGlyph, () -> demolishing, () -> {
             demolishing = !demolishing;
             if (demolishing) selected = null;
@@ -234,7 +315,8 @@ public final class Game implements BoardPanel.Handler {
             refresh();
         });
         demolishIcon.setToolTipText("Dismantle: click a machine to remove the whole block, half cost back.");
-        tools.add(demolishIcon);
+        demolishIcon.setBounds(TAB_PAD, y, toolSize, toolSize);
+        panel.add(demolishIcon);
 
         var powerIcon = new ToolIcon("PWR", Game::paintPowerGlyph, () -> toggling, () -> {
             toggling = !toggling;
@@ -247,28 +329,44 @@ public final class Game implements BoardPanel.Handler {
         });
         powerIcon.setToolTipText("Power Switch: click a machine to switch its whole block on or off. "
                 + "Off machines draw no power and make nothing, but stay built.");
-        tools.add(powerIcon);
-        // Fixes the row's height to the tiles' natural size, same reason the machine grid below does.
-        tools.setMaximumSize(new Dimension(Integer.MAX_VALUE, tools.getPreferredSize().height));
-        list.add(tools);
-        list.add(Box.createVerticalStrut(10));
-        list.add(new SectionLabel("Machines"));
+        powerIcon.setBounds(TAB_PAD + toolSize + toolGap, y, toolSize, toolSize);
+        panel.add(powerIcon);
+        y += toolSize + 10;
 
-        var grid = new JPanel(new GridLayout(0, 4, 6, 6));
-        grid.setOpaque(false);
-        for (Machine m : Machine.BUILDABLE) grid.add(new MachineIcon(m));
-        // Fixes the grid's height to its natural (rows x icon height) size so BoxLayout doesn't
-        // stretch it to fill the glue's space below — the same "unbounded width, fixed height"
-        // trick ItemRow.getMaximumSize() already uses.
-        grid.setMaximumSize(new Dimension(Integer.MAX_VALUE, grid.getPreferredSize().height));
-        list.add(grid);
-        list.add(Box.createVerticalStrut(10));
+        var machinesLabel = new SectionLabel("Machines");
+        machinesLabel.setBounds(TAB_PAD, y, TAB_CONTENT_W, 20);
+        panel.add(machinesLabel);
+        y += 20;
 
-        list.add(new SectionLabel("Details"));
-        list.add(detail);
+        int cols = 4, iconSize = 74, iconGap = 6;
+        for (int i = 0; i < Machine.BUILDABLE.size(); i++) {
+            var icon = new MachineIcon(Machine.BUILDABLE.get(i));
+            int col = i % cols, row = i / cols;
+            icon.setBounds(TAB_PAD + col * (iconSize + iconGap), y + row * (iconSize + iconGap), iconSize, iconSize);
+            panel.add(icon);
+        }
+        int rows = (Machine.BUILDABLE.size() + cols - 1) / cols;
+        y += rows * (iconSize + iconGap) - iconGap + 10;
 
-        list.add(Box.createVerticalGlue());
-        return Ui.scroll(list);
+        var detailsLabel = new SectionLabel("Details");
+        detailsLabel.setBounds(TAB_PAD, y, TAB_CONTENT_W, 20);
+        panel.add(detailsLabel);
+        y += 20;
+
+        // detail's fixed height is the tallest any buildable machine's card would need, probed
+        // once here rather than recomputed on every pick — see the field Javadoc for why this
+        // replaces the dynamic revalidate()-on-selection-change the card used to need.
+        Machine savedSelection = selected;
+        int detailH = detail.getPreferredSize().height;
+        for (Machine m : Machine.BUILDABLE) {
+            selected = m;
+            detailH = Math.max(detailH, detail.getPreferredSize().height);
+        }
+        selected = savedSelection;
+        detail.setBounds(TAB_PAD, y, TAB_CONTENT_W, detailH);
+        panel.add(detail);
+
+        return panel;
     }
 
     /**
@@ -291,35 +389,25 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the RESEARCH tab: one {@link ItemRow} per {@link Tech}, in declaration order,
-     * split into {@link #unfinishedTechs} above and {@link #finishedTechs} below a {@link
-     * #finishedLabel} divider — so completed research reads as a receipt at the bottom of the
-     * list rather than staying mixed in with what's still buyable.
+     * Builds the RESEARCH tab: a "Research" heading, one {@link ItemRow} per {@link Tech} (in a
+     * null-layout content panel positioned by {@link #positionTechRows()}), and the {@link
+     * #finishedLabel} divider — all wrapped in a fixed-size {@link Ui#scroll}, since ~26 techs
+     * are known in advance not to fit statically the way BUILD's ~22 items do.
      *
      * <p>Same functional-callback-style wiring as {@link #buildTab()}: each row gets a fresh
      * anonymous {@link ItemRow.Model} closing over the loop variable {@code t} and {@code
-     * engine}. Each row is wrapped in a small bordered panel purely to carry its own bottom
-     * margin — see the wrapping comment below for why that, rather than the usual trailing
-     * {@link Box#createVerticalStrut}, is what gets used here.
+     * engine}. Row positions themselves are computed by {@link #positionTechRows()}, not here —
+     * this method only builds the rows and hands them off.
      *
      * @return the scrollable RESEARCH tab body
      */
     private JComponent techTab() {
-        var list = new JPanel();
-        list.setOpaque(false);
-        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        list.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        list.add(new SectionLabel("Research"));
+        researchContent = new JPanel(null);
+        researchContent.setOpaque(false);
 
-        unfinishedTechs.setOpaque(false);
-        unfinishedTechs.setLayout(new BoxLayout(unfinishedTechs, BoxLayout.Y_AXIS));
-        list.add(unfinishedTechs);
-
-        finishedLabel.setVisible(false);
-        list.add(finishedLabel);
-        finishedTechs.setOpaque(false);
-        finishedTechs.setLayout(new BoxLayout(finishedTechs, BoxLayout.Y_AXIS));
-        list.add(finishedTechs);
+        var researchLabel = new SectionLabel("Research");
+        researchLabel.setBounds(TAB_PAD, 0, TAB_CONTENT_W, 20);
+        researchContent.add(researchLabel);
 
         for (Tech t : Tech.values()) {
             var row = new ItemRow(new ItemRow.Model() {
@@ -342,29 +430,75 @@ public final class Game implements BoardPanel.Handler {
                 }
             });
             techRows.put(t, row);
-            // A row moves whole between unfinishedTechs and finishedTechs in refresh(), so its
-            // spacing has to travel with it; a separate trailing Box.createVerticalStrut (as
-            // buildTab() uses) would get left behind in the old panel instead. Wrapping the row
-            // in its own bordered panel keeps the row and its margin as one movable unit.
-            var wrap = new JPanel(new BorderLayout());
-            wrap.setOpaque(false);
-            wrap.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
-            wrap.add(row, BorderLayout.CENTER);
-            (engine.board.has(t) ? finishedTechs : unfinishedTechs).add(wrap);
+            researchContent.add(row);
         }
-        finishedLabel.setVisible(finishedTechs.getComponentCount() > 0);
-        list.add(Box.createVerticalGlue());
-        return Ui.scroll(list);
+        researchContent.add(finishedLabel);
+        positionTechRows();
+
+        return Ui.scroll(researchContent);
     }
 
     /**
-     * Switches the card deck to the named tab and updates each {@link TabButton}'s active
-     * (highlighted) state to match.
+     * Positions every research row and the {@link #finishedLabel} divider from scratch: every
+     * not-yet-researched tech first, in declaration order, then — if anything is done yet — the
+     * divider, then every researched tech, also in declaration order. Each row's height comes
+     * from its own {@link ItemRow#getPreferredSize()}; the running {@code y} cursor is a plain
+     * loop variable, not a {@link LayoutManager}.
      *
-     * @param name one of "BUILD", "RESEARCH", "MANUAL" — must match a card key added in {@link #side()}
+     * <p>Called once from {@link #techTab()}, then again from {@link #refresh()} (liberally —
+     * see there for why that's cheap enough) and {@link #abandon()} whenever a tech's done state
+     * might have changed. Recomputing every row's position from scratch, rather than moving just
+     * the one row that changed the way an earlier {@link BoxLayout}-based version did, is both
+     * simpler and immune to that version's ordering bug after {@link #abandon()} wiped every tech
+     * back to unresearched at once.
+     *
+     * <p>Finishes by setting {@link #researchContent}'s preferred size to the true content
+     * height and revalidating it — the one piece of bookkeeping a scrollable, statically
+     * positioned panel still needs, so the scrollbar knows how far there is to pan. That's
+     * scoped to this one panel's scroll extent, not a {@link LayoutManager} repositioning
+     * siblings, which is the dynamism this class avoids.
+     */
+    private void positionTechRows() {
+        int y = 24;
+        for (Tech t : Tech.values()) {
+            if (engine.board.has(t)) continue;
+            var row = techRows.get(t);
+            int h = row.getPreferredSize().height;
+            row.setBounds(TAB_PAD, y, TAB_CONTENT_W, h);
+            y += h + 5;
+        }
+        boolean anyDone = false;
+        for (Tech t : Tech.values()) if (engine.board.has(t)) { anyDone = true; break; }
+        finishedLabel.setVisible(anyDone);
+        if (anyDone) {
+            finishedLabel.setBounds(TAB_PAD, y, TAB_CONTENT_W, 20);
+            y += 20 + 4;
+            for (Tech t : Tech.values()) {
+                if (!engine.board.has(t)) continue;
+                var row = techRows.get(t);
+                int h = row.getPreferredSize().height;
+                row.setBounds(TAB_PAD, y, TAB_CONTENT_W, h);
+                y += h + 5;
+            }
+        }
+        // SIDE_W minus a little, not SIDE_W itself: Ui.scroll's vertical scrollbar reserves 9px
+        // of the panel's width, and a preferred width that claims the full SIDE_W (wider than
+        // the viewport that leaves for it) makes JScrollPane decide it ALSO needs a horizontal
+        // scrollbar to pan across that extra sliver — a second, unwanted scrollbar for content
+        // that was never actually meant to scroll sideways.
+        researchContent.setPreferredSize(new Dimension(SIDE_W - 10, y + 10));
+        researchContent.revalidate();
+    }
+
+    /**
+     * Switches which tab body is visible and updates each {@link TabButton}'s active
+     * (highlighted) state to match — the entire replacement for asking a {@link CardLayout} to
+     * swap cards, now that {@link #tabPanels} just holds all three at once.
+     *
+     * @param name one of "BUILD", "RESEARCH", "MANUAL" — must match a key put in {@link #side()}
      */
     private void showTab(String name) {
-        ((CardLayout) cards.getLayout()).show(cards, name);
+        for (var e : tabPanels.entrySet()) e.getValue().setVisible(e.getKey().equals(name));
         for (TabButton t : tabs) {
             t.active = t.label.equals(name);
             t.repaint();
@@ -395,55 +529,25 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Re-syncs all UI surfaces with current engine state: updates the hint text, revalidates the
-     * BUILD tab's {@link #detail} card, moves any newly-completed research row down into {@link
-     * #finishedTechs}, and repaints the ledger, tab cards and manual. Called after every player
-     * action and on a timer from {@link #start()}; cheap enough to call liberally since it does
-     * no layout work beyond that one revalidate.
+     * Re-syncs all UI surfaces with current engine state: updates the hint text, repositions the
+     * RESEARCH tab's rows in case a tech's done state just changed, and repaints the ledger, the
+     * three tab bodies, and the manual. Called after every player action and on a timer from
+     * {@link #start()}.
      *
-     * <p>The BUILD tab's {@link MachineIcon} tiles need no explicit show/hide bookkeeping here,
-     * unlike the RESEARCH tab's rows — every tile is always present and reads {@code
-     * engine}/{@code selected} straight off {@code this} on every repaint (see {@link
-     * #buildTab()}), so {@code cards.repaint()} below is enough to bring them up to date. {@link
-     * #detail} is the exception: its preferred size depends on {@code selected} too, so it needs
-     * an actual {@code revalidate()}, not just a repaint — see its field Javadoc.
+     * <p>Nothing here calls {@code revalidate()} on anything other than {@link
+     * #researchContent} (inside {@link #positionTechRows()}): every other component's bounds
+     * were fixed once at construction and never need to change again, so a plain {@code
+     * repaint()} is enough to bring it up to date with current engine state — see the class
+     * Javadoc. {@link #positionTechRows()} itself is called unconditionally rather than only
+     * when a tech's done-state actually flipped: it's cheap (26 {@link ItemRow#getPreferredSize}
+     * calls, pure text measurement, no painting) and unconditional is simpler than tracking
+     * "did anything change" separately.
      */
     public void refresh() {
-        String next = hintText();
-        if (!next.equals(hint.text)) {
-            hint.text = next;
-            hint.revalidate();
-            hint.getParent().revalidate();
-        }
-        // Research only ever finishes, never un-finishes, so a row is moved at most once: the
-        // moment engine.board.has(t) first turns true, its wrapper panel (see techTab()) is
-        // relocated from unfinishedTechs to the end of finishedTechs, carrying its own spacing
-        // with it. Rows already in finishedTechs are skipped by the parent check below.
-        boolean movedAny = false;
-        for (Tech t : Tech.values()) {
-            ItemRow row = techRows.get(t);
-            if (row == null || !engine.board.has(t)) continue;
-            var wrap = row.getParent();
-            if (wrap != null && wrap.getParent() == unfinishedTechs) {
-                unfinishedTechs.remove(wrap);
-                finishedTechs.add(wrap);
-                movedAny = true;
-            }
-        }
-        if (movedAny) {
-            finishedLabel.setVisible(true);
-            unfinishedTechs.revalidate();
-            finishedTechs.revalidate();
-            finishedLabel.revalidate();
-        }
-        // detail's preferred height depends on selected, so a repaint alone isn't enough after
-        // a pick changes it — see the field Javadoc for why this is the one BUILD-tab component
-        // that needs it. Unconditional, same as ledger.revalidate() below: cheap enough on a
-        // single component that tracking "did selected actually change" isn't worth the field.
-        detail.revalidate();
-        ledger.revalidate();
+        hint.text = hintText();
+        positionTechRows();
         ledger.repaint();
-        cards.repaint();
+        for (JComponent p : tabPanels.values()) p.repaint();
         manual.repaint();
     }
 
@@ -490,23 +594,12 @@ public final class Game implements BoardPanel.Handler {
         boardPanel.setGhost(null);
         boardPanel.setDemolishing(false);
         boardPanel.setToggling(false);
-        // Undoes refresh()'s one-way move into finishedTechs: abandoning wipes board.tech, so
-        // every tech is unresearched again. refresh() only ever moves a row forward, so this
-        // rebuilds both panels from scratch in declaration order rather than moving rows back
-        // one at a time — a piecemeal move-back would append each recovered row at the end of
-        // unfinishedTechs instead of restoring its original position among the rows that were
-        // never touched, silently scrambling the list order.
-        unfinishedTechs.removeAll();
-        finishedTechs.removeAll();
-        for (Tech t : Tech.values()) {
-            ItemRow row = techRows.get(t);
-            if (row != null) unfinishedTechs.add(row.getParent());
-        }
-        finishedLabel.setVisible(false);
-        unfinishedTechs.revalidate();
-        finishedTechs.revalidate();
         engine.markDirty();
         engine.recompute();
+        // Every tech is unresearched again now that board.tech is cleared; positionTechRows()
+        // (called again inside refresh() below) puts every row back above the divider in
+        // declaration order on its own, since it always recomputes from scratch rather than
+        // moving whatever changed — see its Javadoc.
         refresh();
     }
 
@@ -1045,14 +1138,14 @@ public final class Game implements BoardPanel.Handler {
      *
      * <p>Reads {@code selected} straight off the enclosing {@link Game} instance on every
      * repaint, the same functional-callback-style wiring as {@link MachineIcon} — there's no
-     * explicit refresh path, {@link Game#refresh()}'s {@code cards.repaint()} is enough.
+     * explicit refresh path, {@code Game.refresh()}'s per-tab {@code repaint()} is enough.
      *
-     * <p>{@link #getPreferredSize()} and {@link #paintComponent} independently re-derive the
-     * same line count from {@link Ui#wrap} (the same duplication tradeoff {@link Manual} and
-     * {@link HintBox} already make, for the same reason: keeping layout and painting in sync by
-     * construction is simpler than caching a value neither method fully owns), with a small
-     * built-in margin so the card is never one pixel too short for its own wrapped text — the
-     * original complaint about this area.
+     * <p>{@link #getPreferredSize()} is only ever called by {@link #buildTab()}'s height-probing
+     * loop, which takes the tallest result across every buildable machine and freezes that as
+     * this card's one fixed {@code setBounds} height — selecting a different machine afterward
+     * only ever repaints, it never resizes. That replaces an earlier version where this card's
+     * actual on-screen size tracked {@code selected} live via {@code revalidate()}, which is
+     * exactly the kind of dynamic, content-driven sizing this whole class now avoids.
      */
     private final class MachineDetail extends JComponent {
         private static final Font TITLE = Theme.monoBold(15);
@@ -1061,25 +1154,18 @@ public final class Game implements BoardPanel.Handler {
 
         MachineDetail() { setOpaque(false); }
 
-        /** Live width estimate, same trick {@link ItemRow#width()} uses. */
-        private int width() {
-            int parent = getParent() != null ? getParent().getWidth() - 20 : 0;
-            return parent > 60 ? parent : (getWidth() > 60 ? getWidth() : 300);
-        }
-
-        /** Width left for text once the icon column and padding are subtracted. */
-        private int textWidth() { return Math.max(80, width() - PAD * 2 - ICON - GAP); }
+        /** Width left for text once the icon column and padding are subtracted from the fixed {@link Game#TAB_CONTENT_W}. */
+        private int textWidth() { return Math.max(80, TAB_CONTENT_W - PAD * 2 - ICON - GAP); }
 
         /**
-         * Height is the icon's height when nothing is selected (so the card doesn't shrink to a
-         * sliver and jump size the moment something is picked), otherwise the title plus a meta
-         * line, one line per cost resource (see {@link #paintComponent} for why cost isn't one
-         * joined line), and every wrapped line of {@link #describe} and the blurb — each counted
-         * at {@code BODY}'s line height plus 2px, a couple pixels more generous than {@link
-         * #paintComponent} actually uses per line, as headroom against clipping.
+         * Height is the icon's height when nothing is selected (so the probe in {@link
+         * #buildTab()} never freezes a height shorter than the icon itself), otherwise the title
+         * plus a meta line, one line per cost resource (see {@link #paintComponent} for why cost
+         * isn't one joined line), and every wrapped line of {@link #describe} and the blurb —
+         * each counted at {@code BODY}'s line height plus 2px, a couple pixels more generous
+         * than {@link #paintComponent} actually uses per line, as headroom against clipping.
          */
         @Override public Dimension getPreferredSize() {
-            int w = width();
             var fmT = getFontMetrics(TITLE);
             var fm = getFontMetrics(BODY);
             int textH;
@@ -1091,10 +1177,8 @@ public final class Game implements BoardPanel.Handler {
                 lines += Ui.wrap(selected.spec().blurb(), fm, textWidth()).size();
                 textH = fmT.getHeight() + 6 + lines * (fm.getHeight() + 2);
             }
-            return new Dimension(w, PAD * 2 + Math.max(ICON, textH));
+            return new Dimension(TAB_CONTENT_W, PAD * 2 + Math.max(ICON, textH));
         }
-
-        @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
 
         /**
          * Draws the card frame, then either the empty-state hint or the icon plus title, meta,
@@ -1171,7 +1255,9 @@ public final class Game implements BoardPanel.Handler {
      * JToggleButton} so the label's letter-spacing is under manual control: the constructor's
      * {@code onClick} is invoked straight from a raw mouse listener, and painting measures each
      * character's width, centers the whole run, then draws it one glyph at a time with a fixed
-     * 2px gap between letters.
+     * 2px gap between letters. Sized entirely by whatever {@code setBounds} rect {@link
+     * #side()} gives it; painting reads that back via {@link #getWidth()}/{@link #getHeight()}
+     * rather than declaring its own preferred size.
      */
     private static final class TabButton extends JComponent {
         /** Tab name, also used as the {@link CardLayout} key in {@link Game#showTab}. */
@@ -1191,9 +1277,6 @@ public final class Game implements BoardPanel.Handler {
                 @Override public void mousePressed(java.awt.event.MouseEvent e) { onClick.run(); }
             });
         }
-
-        /** Fixed size; the tab row uses a {@link GridLayout} so all three buttons are equal width anyway. */
-        @Override public Dimension getPreferredSize() { return new Dimension(80, 30); }
 
         /**
          * Paints the active-state fill and border, then the label: computes total advance width
@@ -1227,17 +1310,14 @@ public final class Game implements BoardPanel.Handler {
      * A small uppercase section heading (e.g. "MACHINES", "RESEARCH") with a rule underneath. A
      * bespoke {@link JComponent} instead of a {@link JLabel} for the same reason as {@link
      * TabButton}: manual per-glyph {@code drawString} gives wider, deliberate letter-spacing
-     * (2.5px) than default font kerning provides at this small size.
+     * (2.5px) than default font kerning provides at this small size. Every caller gives this a
+     * fixed 20px-tall {@code setBounds} rect; {@link #paintComponent} just reads back whatever
+     * width that rect turned out to be, via {@link #getWidth()}, for the underline rule.
      */
     private static final class SectionLabel extends JComponent {
         private final String text;
 
         SectionLabel(String text) { this.text = text; }
-
-        /** Fixed height; the label sits in a {@link BoxLayout} so width is stretched by the container. */
-        @Override public Dimension getPreferredSize() { return new Dimension(100, 20); }
-        /** Caps height at 20px so {@link BoxLayout} doesn't stretch it vertically. */
-        @Override public Dimension getMaximumSize()   { return new Dimension(Integer.MAX_VALUE, 20); }
 
         /** Draws the uppercased text glyph-by-glyph with a fixed 2.5px advance, then the underline rule. */
         @Override protected void paintComponent(Graphics graphics) {
@@ -1260,36 +1340,13 @@ public final class Game implements BoardPanel.Handler {
         String text = "";
 
         /**
-         * Computes the box's height by re-running the text-wrapping algorithm against {@link
-         * #wrapWidth()} to count how many lines the current text needs. This redoes the same
-         * wrapping work that {@link #paintComponent} does, independently and on every layout
-         * pass, rather than caching the wrapped lines — simple at the cost of wrapping twice per
-         * frame, and correct as long as {@link Ui#wrap} is cheap and deterministic.
+         * Paints the amber background, left accent bar, and the hint text wrapped to this
+         * component's own (fixed) width. {@link Game#buildTab()} gives this a single fixed
+         * {@code setBounds} rect sized to {@code Game.HINT_H} — generous enough for the longest
+         * of {@code Game.hintText()}'s tips — so, unlike the version of this box that predates
+         * this class dropping every {@link LayoutManager}, wrapping here never feeds back into
+         * a resize: it only ever affects how many of the box's already-fixed rows get used.
          */
-        @Override public Dimension getPreferredSize() {
-            int w = wrapWidth();
-            var fm = getFontMetrics(Theme.mono(11));
-            int lines = Math.max(1, Ui.wrap(text, fm, w).size());
-            return new Dimension(w + 16, lines * (fm.getHeight() + 1) + 12);
-        }
-
-        /**
-         * Width to wrap text at: prefers the live parent width (so the box re-wraps as the
-         * window resizes), falling back to this component's own width, and finally to the magic
-         * literal 300 when neither is known yet. The {@code > 60} checks guard against reading a
-         * width from a parent/self that Swing hasn't laid out yet (which reports 0 or a stale
-         * small value) and would otherwise wrap text down to one character per line.
-         */
-        private int wrapWidth() {
-            int parent = getParent() != null ? getParent().getWidth() - 20 : 0;
-            int w = parent > 60 ? parent : (getWidth() > 60 ? getWidth() : 300);
-            return Math.max(120, w - 16);
-        }
-
-        /** Height tracks {@link #getPreferredSize()} exactly; width is free to stretch in a {@link BoxLayout}. */
-        @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
-
-        /** Paints the amber background, left accent bar, and the hint text re-wrapped at {@link #wrapWidth()}. */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
@@ -1301,7 +1358,7 @@ public final class Game implements BoardPanel.Handler {
             var fm = g.getFontMetrics();
             g.setColor(new Color(0xFF, 0xDD, 0xA6));
             int y = 6 + fm.getAscent();
-            for (String line : Ui.wrap(text, fm, wrapWidth())) {
+            for (String line : Ui.wrap(text, fm, getWidth() - 16)) {
                 g.drawString(line, 10, y);
                 y += fm.getHeight() + 1;
             }
@@ -1371,17 +1428,13 @@ public final class Game implements BoardPanel.Handler {
         }
 
         /**
-         * Width to wrap section text at: prefers the live parent width, falling back to this
-         * component's own width, and finally to the magic literal 320 before either has been laid
-         * out. Same {@code > 60} defensive guard as {@link HintBox#wrapWidth()}, against reading a
-         * width of 0 (or another not-yet-laid-out stale value) from a parent/self Swing hasn't
-         * sized yet.
+         * Fixed width to wrap section text at, matching {@code Game.TAB_CONTENT_W} (this
+         * component's own {@code setBounds} width once {@link Game#side()} wraps it in a
+         * fixed-size {@link Ui#scroll}) minus a little for the scrollbar. A constant, not read
+         * from a live parent: this class has no {@link LayoutManager} anywhere to feed a dynamic
+         * width back into.
          */
-        private int wrapWidth() {
-            int parent = getParent() != null ? getParent().getWidth() - 4 : 0;
-            int w = parent > 60 ? parent : (getWidth() > 60 ? getWidth() : 320);
-            return Math.max(140, w - 16);
-        }
+        private int wrapWidth() { return 320; }
 
         /** Paints every section's heading (glyph-spaced like {@link SectionLabel}) and wrapped body, then the log. */
         @Override protected void paintComponent(Graphics graphics) {

@@ -20,6 +20,12 @@ public final class Main {
      * deliberate belt-and-suspenders: either path alone might not fire on every platform/exit
      * route, so both are registered and it's fine if both end up running (the save is
      * idempotent).
+     *
+     * <p>The window is a fixed size and not resizable. {@link Game#root()} places every
+     * component with an explicit {@code setBounds} rect rather than a {@link
+     * java.awt.LayoutManager} reacting to available space, so there is no "available space" for
+     * it to react to — letting the player resize the frame would either leave dead margins or
+     * clip content with nothing watching to adjust it.
      */
     public static void main(String[] args) {
         System.setProperty("sun.java2d.opengl", "false");
@@ -40,9 +46,8 @@ public final class Main {
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
             frame.setContentPane(game.root());
             frame.getContentPane().setBackground(Theme.INK);
-            frame.setMinimumSize(new Dimension(980, 720));
+            frame.setResizable(false);
             frame.pack();
-            frame.setSize(new Dimension(1180, 860));
             frame.setLocationRelativeTo(null);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> Save.write(engine.board)));
             frame.addWindowListener(new java.awt.event.WindowAdapter() {
