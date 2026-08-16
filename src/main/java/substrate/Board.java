@@ -49,6 +49,13 @@ public final class Board {
     public long savedAt = System.currentTimeMillis();
     /** Recent event lines, newest first, capped by {@link #logLine}. */
     public final List<String> log = new ArrayList<>();
+    /**
+     * Whether the site has ever completed the victory condition (building a {@link
+     * Machine#TOKAMAK}) — see {@link Engine#place}. Sticky and one-way: unlike {@link
+     * #count(Machine)}, this does not un-set if the reactor is later dismantled, since it
+     * records an achievement rather than current board state.
+     */
+    public boolean won;
 
     /** Fresh board: every resource at zero, only Matter marked discovered, core placed at centre. */
     public Board() {

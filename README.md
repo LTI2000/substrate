@@ -44,6 +44,8 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
   An off block still conducts power through to whatever is fused or wired past it.
 - Amber dashes mark the edge of your claim. Research widens it.
 - Hover anything for readings. The MANUAL tab explains the rest.
+- Victory: build a Fusion Reactor, the machine at the top of the research tree. The site marks
+  it permanently in the masthead; nothing stops, so play on as long as you like afterward.
 
 ## Layout
 

@@ -225,6 +225,30 @@ class EngineTest {
     }
 
     /**
+     * Checks the victory condition: placing the first Fusion Reactor latches {@link Board#won}
+     * permanently and logs the moment, and that demolishing the reactor afterward leaves the
+     * flag set — it's a record of having once reached the top of the tech tree, not a live
+     * count of how many reactors currently stand. {@link Engine#place} doesn't itself check
+     * {@link Engine#unlocked}, so this reaches the same effect a real Fission + Geometric
+     * Synergy II research chain would gate, without having to research the whole tree first.
+     */
+    @Test
+    @DisplayName("building the first Fusion Reactor wins, permanently")
+    void firstFusionReactorWins() {
+        var e = TestSite.blank();
+        var b = e.board;
+        b.claim = 15;
+        assertFalse(b.won, "not won at the start of a fresh site");
+
+        build(e, Machine.TOKAMAK, 7, 5, 1, 1);
+        assertTrue(b.won, "the first reactor latches victory");
+        assertEquals("Fusion Reactor online. The site has reached self-sustaining output.", b.log.get(0));
+
+        e.demolish(e.layout().at(7, 5));
+        assertTrue(b.won, "demolishing the reactor afterward doesn't undo the achievement");
+    }
+
+    /**
      * Checks that an underpowered site (demand exceeding supply) scales every machine's
      * throughput by the same satisfaction fraction, that a machine with no path to the core
      * stays unpowered, and that resource values remain finite throughout — no NaN or infinity

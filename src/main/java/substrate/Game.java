@@ -15,12 +15,15 @@ import java.util.Map;
  * laid out on screen; everything downstream ({@link BoardPanel}, {@link LedgerPanel}, {@link
  * ItemRow}, ...) is a dumb view driven from here.
  *
- * <p>The build and research rows are not backed by a proper view-model class. Each row's {@link
- * ItemRow.Model} is a fresh anonymous inner class created per machine or tech inside a loop,
- * closing over the loop variable ({@code m} or {@code t}) and over {@code engine} and this
- * class's mutable fields ({@code selected}, {@code demolishing}). This is functional-callback-style
- * UI wiring: each row is just a bundle of closures re-evaluated on every repaint, so there is
- * nothing to keep in sync — the closures always read current engine state.
+ * <p>Nothing in the BUILD or RESEARCH tabs is backed by a proper view-model class. The RESEARCH
+ * tab's rows and the BUILD tab's two tool rows and single detail row are each a fresh anonymous
+ * {@link ItemRow.Model} inner class, closing over a loop variable ({@code t}) or over {@code
+ * this} directly, plus this class's mutable fields ({@code selected}, {@code demolishing},
+ * {@code toggling}). The BUILD tab's per-machine tiles go one step further and skip {@link
+ * ItemRow} entirely — see {@link MachineIcon} — since a whole grid of them needs to stay small.
+ * This is all functional-callback-style UI wiring: every row/tile is just a bundle of closures
+ * re-evaluated on every repaint, so there is nothing to keep in sync — they always read current
+ * engine state.
  */
 public final class Game implements BoardPanel.Handler {
 
@@ -34,12 +37,17 @@ public final class Game implements BoardPanel.Handler {
     private final StatusBar status;
     /** Rotating gameplay tip shown above the build list; see {@link #hintText()}. */
     private final HintBox hint;
+    /**
+     * The BUILD tab's detail card; kept as a field (rather than a local in {@link #buildTab()},
+     * like {@link MachineIcon} tiles) so {@link #refresh()} can {@code revalidate()} it — its
+     * preferred size depends on {@code selected}, unlike every other row/tile on this tab, whose
+     * size is fixed regardless of state.
+     */
+    private final MachineDetail detail;
     /** Card-switches between the BUILD, RESEARCH and MANUAL side-panel tabs. */
     private final JPanel cards = new JPanel(new CardLayout());
     /** The three tab buttons (BUILD/RESEARCH/MANUAL), kept so {@link #showTab(String)} can toggle their active state. */
     private final List<TabButton> tabs = new ArrayList<>();
-    /** Build-list rows keyed by machine, so {@link #refresh()} can show/hide them as tech unlocks. */
-    private final Map<Machine, ItemRow> buildRows = new EnumMap<>(Machine.class);
     /**
      * Research rows keyed by tech, so {@link #refresh()} can find a just-completed row and move
      * it from {@link #unfinishedTechs} to {@link #finishedTechs}.
@@ -77,6 +85,7 @@ public final class Game implements BoardPanel.Handler {
         this.ledger = new LedgerPanel(engine);
         this.status = new StatusBar();
         this.hint = new HintBox();
+        this.detail = new MachineDetail();
         this.manual = new Manual(engine);
     }
 
@@ -176,17 +185,19 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the BUILD tab: the hint box, dedicated "Dismantle" and "Power Switch" rows, and
-     * one {@link ItemRow} per buildable {@link Machine}.
+     * Builds the BUILD tab: the hint box, dedicated "Dismantle" and "Power Switch" rows, a grid
+     * of one {@link MachineIcon} per buildable {@link Machine}, and a single {@link
+     * MachineDetail} card beneath it showing full detail for whichever machine is currently
+     * {@link #selected}.
      *
-     * <p>Each row's {@link ItemRow.Model} and click handler are anonymous inner classes created
-     * fresh inside the loop, closing over the loop variable {@code m} and over this class's
-     * mutable state ({@code engine}, {@code selected}, {@code demolishing}, {@code toggling}).
-     * There is no intermediate view-model object; the closures are read live by {@link ItemRow}
-     * on every repaint, so a row always reflects current engine state without any explicit
-     * refresh wiring beyond calling {@link #refresh()} after a state change. The three tools
-     * (placing a selected machine, dismantling, power-switching) are mutually exclusive, so
-     * every row's handler clears the other two.
+     * <p>Unlike the old one-{@link ItemRow}-per-machine layout, every icon is always present
+     * (never hidden as tech unlocks) — a locked or unaffordable one just paints itself dimmed,
+     * since {@link MachineIcon#paintComponent} reads {@code engine} live on every repaint. That
+     * sidesteps the reflow problem a variable-length visible list would have: with a fixed
+     * {@link GridLayout} there is no gap to leave behind when an icon "hides."
+     *
+     * <p>Selecting a locked machine still shows its cost and "needs X" requirement in the detail
+     * card, even though it can't be armed for placement — see {@link #pickMachine}.
      *
      * @return the scrollable BUILD tab body
      */
@@ -244,39 +255,40 @@ public final class Game implements BoardPanel.Handler {
         list.add(Box.createVerticalStrut(10));
         list.add(new SectionLabel("Machines"));
 
-        // Fresh anonymous Model + click handler per machine, closing over the loop variable m;
-        // see class-level Javadoc for why this replaces a proper view-model type.
-        for (Machine m : Machine.BUILDABLE) {
-            var row = new ItemRow(new ItemRow.Model() {
-                public String title() { return m.spec().label(); }
-                public String meta()  {
-                    if (!engine.unlocked(m)) return "needs " + m.spec().tech().label;
-                    return m.spec().abbr() + " x" + engine.board.count(m);
-                }
-                public Map<Res, Double> cost() { return engine.priceOf(m); }
-                public String io()    { return describe(m); }
-                public String blurb() { return m.spec().blurb(); }
-                public boolean affordable() { return engine.unlocked(m) && engine.affordable(engine.priceOf(m)); }
-                public boolean selected()   { return selected == m; }
-                public boolean done()       { return false; }
-            }, () -> {
-                // Always selects m, even if it's already selected: clicking a build row is a
-                // one-way arm action now, not a toggle. Deselecting is Q's job (see bindKeys()).
-                if (!engine.unlocked(m)) return;
-                selected = m;
-                demolishing = false;
-                toggling = false;
-                boardPanel.setDemolishing(false);
-                boardPanel.setToggling(false);
-                boardPanel.setGhost(selected);
-                refresh();
-            });
-            buildRows.put(m, row);
-            list.add(row);
-            list.add(Box.createVerticalStrut(5));
-        }
+        var grid = new JPanel(new GridLayout(0, 4, 6, 6));
+        grid.setOpaque(false);
+        for (Machine m : Machine.BUILDABLE) grid.add(new MachineIcon(m));
+        // Fixes the grid's height to its natural (rows x icon height) size so BoxLayout doesn't
+        // stretch it to fill the glue's space below — the same "unbounded width, fixed height"
+        // trick ItemRow.getMaximumSize() already uses.
+        grid.setMaximumSize(new Dimension(Integer.MAX_VALUE, grid.getPreferredSize().height));
+        list.add(grid);
+        list.add(Box.createVerticalStrut(10));
+
+        list.add(new SectionLabel("Details"));
+        list.add(detail);
+
         list.add(Box.createVerticalGlue());
         return Ui.scroll(list);
+    }
+
+    /**
+     * Arms {@code m} for placement, or just shows its detail if it isn't unlocked yet: sets
+     * {@link #selected}, clears the other two board tools, and only sets the {@link BoardPanel}
+     * ghost preview when {@code m} is actually buildable, so a locked machine's cost/blurb still
+     * populates {@link MachineDetail} without letting the player try to place it. Shared by
+     * every {@link MachineIcon}'s click handler.
+     *
+     * @param m the machine icon that was clicked
+     */
+    private void pickMachine(Machine m) {
+        selected = m;
+        demolishing = false;
+        toggling = false;
+        boardPanel.setDemolishing(false);
+        boardPanel.setToggling(false);
+        boardPanel.setGhost(engine.unlocked(m) ? m : null);
+        refresh();
     }
 
     /**
@@ -384,11 +396,18 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Re-syncs all UI surfaces with current engine state: updates the hint text, shows/hides
-     * build rows whose unlock state changed, moves any newly-completed research row down into
-     * {@link #finishedTechs}, and repaints the ledger, tab cards and manual. Called after every
-     * player action and on a timer from {@link #start()}; cheap enough to call liberally since
-     * it does no layout work unless something actually changed.
+     * Re-syncs all UI surfaces with current engine state: updates the hint text, revalidates the
+     * BUILD tab's {@link #detail} card, moves any newly-completed research row down into {@link
+     * #finishedTechs}, and repaints the ledger, tab cards and manual. Called after every player
+     * action and on a timer from {@link #start()}; cheap enough to call liberally since it does
+     * no layout work beyond that one revalidate.
+     *
+     * <p>The BUILD tab's {@link MachineIcon} tiles need no explicit show/hide bookkeeping here,
+     * unlike the RESEARCH tab's rows — every tile is always present and reads {@code
+     * engine}/{@code selected} straight off {@code this} on every repaint (see {@link
+     * #buildTab()}), so {@code cards.repaint()} below is enough to bring them up to date. {@link
+     * #detail} is the exception: its preferred size depends on {@code selected} too, so it needs
+     * an actual {@code revalidate()}, not just a repaint — see its field Javadoc.
      */
     public void refresh() {
         String next = hintText();
@@ -396,15 +415,6 @@ public final class Game implements BoardPanel.Handler {
             hint.text = next;
             hint.revalidate();
             hint.getParent().revalidate();
-        }
-        for (Machine m : Machine.BUILDABLE) {
-            var row = buildRows.get(m);
-            if (row == null) continue;
-            boolean show = engine.unlocked(m) || (m.spec().tech() != null && engine.researchable(m.spec().tech()));
-            if (row.isVisible() != show) {
-                row.setVisible(show);
-                row.getParent().revalidate();
-            }
         }
         // Research only ever finishes, never un-finishes, so a row is moved at most once: the
         // moment engine.board.has(t) first turns true, its wrapper panel (see techTab()) is
@@ -427,6 +437,11 @@ public final class Game implements BoardPanel.Handler {
             finishedTechs.revalidate();
             finishedLabel.revalidate();
         }
+        // detail's preferred height depends on selected, so a repaint alone isn't enough after
+        // a pick changes it — see the field Javadoc for why this is the one BUILD-tab component
+        // that needs it. Unconditional, same as ledger.revalidate() below: cheap enough on a
+        // single component that tracking "did selected actually change" isn't worth the field.
+        detail.revalidate();
         ledger.revalidate();
         ledger.repaint();
         cards.repaint();
@@ -441,11 +456,13 @@ public final class Game implements BoardPanel.Handler {
      * cell}, {@code ore}, {@code rich}, {@code off}) byte-for-byte onto the <em>live</em>
      * board's arrays via {@link System#arraycopy}, and then manually resets every other mutable
      * board field one by one (resources, seen-set, built/tech sets, claim size, energy, click
-     * count, log). This is a manual "reset in place": {@code engine}, {@code boardPanel},
-     * {@code ledger} and every row's closures are all bound to the original {@link Engine}
-     * instance, so replacing that instance would mean re-wiring every listener and closure
-     * built during {@link #root()}. Mutating the existing engine's board arrays in place avoids
-     * that entirely.
+     * count, victory flag, log). This is a manual "reset in place": {@code engine}, {@code
+     * boardPanel}, {@code ledger} and every row's closures are all bound to the original {@link
+     * Engine} instance, so replacing that instance would mean re-wiring every listener and
+     * closure built during {@link #root()}. Mutating the existing engine's board arrays in place
+     * avoids that entirely. Resetting {@link Board#won} means the masthead's badge (see {@link
+     * Masthead}) correctly disappears on a fresh site rather than carrying over from the
+     * abandoned one.
      */
     private void abandon() {
         int answer = JOptionPane.showConfirmDialog(boardPanel,
@@ -466,6 +483,7 @@ public final class Game implements BoardPanel.Handler {
         engine.board.claim = 7;
         engine.board.energy = 0;
         engine.board.clicks = 0;
+        engine.board.won = false;
         engine.board.log.clear();
         selected = null;
         demolishing = false;
@@ -574,6 +592,11 @@ public final class Game implements BoardPanel.Handler {
      * or off (neither applies to the core), otherwise clicking the core taps it, and clicking
      * with a machine selected attempts placement.
      *
+     * <p>Placement is the one path that can flip {@link Board#won}, so it's the one place that
+     * diffs {@code engine.board.won} across the call and fires {@link #celebrateVictory()} on
+     * the false-to-true edge — see {@link Engine#place} for why the flag lives there instead of
+     * being reported through {@code place}'s own return value.
+     *
      * @param x     cell column
      * @param y     cell row
      * @param group the fused block occupying the cell, or {@code null} if empty
@@ -597,7 +620,27 @@ public final class Game implements BoardPanel.Handler {
             tapCore();
             return;
         }
-        if (selected != null && engine.place(selected, x, y)) refresh();
+        if (selected == null) return;
+        boolean wasWon = engine.board.won;
+        if (engine.place(selected, x, y)) {
+            refresh();
+            if (!wasWon && engine.board.won) celebrateVictory();
+        }
+    }
+
+    /**
+     * One-time congratulations shown the moment {@link Board#won} first flips true: a modal
+     * dialog (the same mechanism {@link #abandon()} already uses for its confirmation prompt)
+     * rather than a custom board overlay, since this fires once per game and doesn't need to
+     * match the board's animated survey-chart look the way persistent UI does. The permanent
+     * record of the achievement is the masthead's {@code ONLINE} badge (see {@link Masthead}),
+     * not this dialog — closing it loses nothing.
+     */
+    private void celebrateVictory() {
+        JOptionPane.showMessageDialog(boardPanel,
+                "Fusion Reactor online.\n\nThe site produces more than it could ever consume. Keep building, "
+                        + "or walk away — the reactor doesn't care either way.",
+                "Victory", JOptionPane.INFORMATION_MESSAGE);
     }
 
     /**
@@ -755,14 +798,19 @@ public final class Game implements BoardPanel.Handler {
      * letters differently from the rest, then continues with the subtitle at the resulting x
      * offset.
      */
-    private static final class Masthead extends JComponent {
-        /** Fixed size; the masthead's content never changes so there is no live measurement to do. */
+    private final class Masthead extends JComponent {
+        /** Fixed size; the masthead's content never changes size regardless of {@link Board#won} so there is no live measurement to do. */
         @Override public Dimension getPreferredSize() { return new Dimension(300, 34); }
 
         /**
          * Draws "SUBSTRATE" glyph-by-glyph with a manual 7px advance per character (the first
          * three letters in chalk, the rest in amber), then the subtitle starting where the title
-         * left off, then the underline rule.
+         * left off, then — once {@link Board#won} — a small amber "FUSION ONLINE" badge after
+         * it, then the underline rule. A non-static inner class (unlike most of this file's
+         * other bespoke widgets) purely so this one line can read {@code engine.board.won}
+         * live; the badge is this achievement's only permanent trace in the UI once the
+         * one-time {@link #celebrateVictory()} dialog has been dismissed, so it has to survive
+         * a save/reload, not just the moment the reactor went down.
          */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
@@ -778,9 +826,246 @@ public final class Game implements BoardPanel.Handler {
             }
             g.setFont(Theme.mono(10));
             g.setColor(Theme.DIM);
-            g.drawString("SURVEY GRID 04   AUTONOMOUS FOUNDRY", x + 10, 22);
+            String subtitle = "SURVEY GRID 04   AUTONOMOUS FOUNDRY";
+            g.drawString(subtitle, x + 10, 22);
+            if (engine.board.won) {
+                g.setColor(Theme.AMBER);
+                g.drawString("· FUSION ONLINE", x + 10 + g.getFontMetrics().stringWidth(subtitle) + 10, 22);
+            }
             g.setColor(Theme.LINE2);
             g.drawLine(0, 32, getWidth(), 32);
+        }
+    }
+
+    /**
+     * One square catalogue tile in the BUILD tab's machine grid: the machine's own {@link Art}
+     * artwork, painted via a synthetic always-on {@link Group} rather than a live board group,
+     * dimmed when locked or unaffordable, bordered amber when it's the current {@link
+     * #selected}, with a small owned-count badge and an abbreviation caption.
+     *
+     * <p>A non-static inner class (unlike {@link TabButton}/{@link SectionLabel}, which are
+     * static and take everything they need as constructor arguments) because it reads {@code
+     * engine} and {@code selected} straight off the enclosing {@link Game} instance on every
+     * repaint, the same functional-callback-style wiring the class Javadoc describes for the
+     * build/research rows — there's no per-icon view-model, just a closure over live state.
+     *
+     * <p>The preview {@link Group} is built once per icon and reused for every paint: {@code
+     * powered} is forced {@code true} so {@link Art#paint} never applies its "dead machine"
+     * hazard overlay (which is about the simulation, not about being locked — lock/afford state
+     * gets its own dimming here instead), and ore-only machines get a representative {@link
+     * Res#IRON_ORE} so their ore-colored details have something to show.
+     */
+    private final class MachineIcon extends JComponent {
+        /** The machine this tile represents and arms when clicked. */
+        private final Machine machine;
+        /** Reused across every repaint; only {@code powered} is overridden from its defaults. */
+        private final Group preview;
+        /** Whether the pointer is currently over this tile; drives the hover border/wash. */
+        private boolean hover;
+
+        MachineIcon(Machine machine) {
+            this.machine = machine;
+            this.preview = previewGroup(machine);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
+                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                @Override public void mousePressed(java.awt.event.MouseEvent e) { pickMachine(machine); }
+            });
+        }
+
+        /** Fixed square tile: {@link GridLayout} gives every tile the same size regardless anyway. */
+        @Override public Dimension getPreferredSize() { return new Dimension(74, 74); }
+
+        /**
+         * Draws the background wash and border (colored by hover/selected state), the machine's
+         * {@link Art} icon composited at reduced alpha when locked or unaffordable, the owned
+         * count in the top-right corner, and the abbreviation caption along the bottom edge.
+         */
+        @Override protected void paintComponent(Graphics graphics) {
+            var g = (Graphics2D) graphics;
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            boolean unlocked = engine.unlocked(machine);
+            boolean afford = unlocked && engine.affordable(engine.priceOf(machine));
+            boolean isSelected = selected == machine;
+            int w = getWidth(), h = getHeight();
+
+            g.setColor(isSelected ? Theme.alpha(Theme.AMBER, 30) : new Color(23, 51, 80, hover ? 130 : 70));
+            g.fillRect(0, 0, w, h);
+
+            Composite old = g.getComposite();
+            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
+            else if (!afford) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
+            double pad = 6, captionH = 13;
+            Art.paint(g, preview, new Rectangle2D.Double(pad, pad, w - pad * 2, h - pad * 2 - captionH), 0, false, 0.5);
+            g.setComposite(old);
+
+            int owned = engine.board.count(machine);
+            if (owned > 0) {
+                g.setFont(Theme.mono(9));
+                g.setColor(Theme.AMBER);
+                String s = "x" + owned;
+                g.drawString(s, w - g.getFontMetrics().stringWidth(s) - 3, 10);
+            }
+
+            g.setFont(Theme.mono(9));
+            g.setColor(unlocked ? Theme.DIM : Theme.alpha(Theme.DIM, 130));
+            String abbr = machine.spec().abbr();
+            g.drawString(abbr, (w - g.getFontMetrics().stringWidth(abbr)) / 2f, h - 4);
+
+            g.setColor(isSelected ? Theme.AMBER : hover ? Theme.LINE2 : Theme.LINE);
+            g.drawRect(0, 0, w - 1, h - 1);
+        }
+    }
+
+    /**
+     * Builds a synthetic, always-on 1x1 {@link Group} purely for catalogue rendering — shared by
+     * {@link MachineIcon} and {@link MachineDetail} so a machine's tile icon and its detail-card
+     * icon are pixel-identical. {@code powered} is forced {@code true} so {@link Art#paint}
+     * never applies its "dead machine" hazard overlay, which is about simulation state, not
+     * about whether the machine is locked or affordable (each caller dims those separately).
+     * Ore-only machines get a representative {@link Res#IRON_ORE} so their ore-colored details
+     * have something to show.
+     *
+     * @param m the machine to preview
+     */
+    private static Group previewGroup(Machine m) {
+        Res ore = m.spec().oreOnly() ? Res.IRON_ORE : null;
+        var g = new Group(0, m, 0, 0, 1, 1, new int[]{0}, ore, 1, true);
+        g.powered = true;
+        return g;
+    }
+
+    /**
+     * The BUILD tab's detail card: a large preview icon beside the full title, cost, and
+     * description of whichever machine is currently {@link #selected} — replacing the old
+     * single {@link ItemRow} used here, which was sized like every other compact list row and
+     * read as cramped now that it's the one and only detail slot rather than one of twenty.
+     *
+     * <p>Reads {@code selected} straight off the enclosing {@link Game} instance on every
+     * repaint, the same functional-callback-style wiring as {@link MachineIcon} — there's no
+     * explicit refresh path, {@link Game#refresh()}'s {@code cards.repaint()} is enough.
+     *
+     * <p>{@link #getPreferredSize()} and {@link #paintComponent} independently re-derive the
+     * same line count from {@link Ui#wrap} (the same duplication tradeoff {@link Manual} and
+     * {@link HintBox} already make, for the same reason: keeping layout and painting in sync by
+     * construction is simpler than caching a value neither method fully owns), with a small
+     * built-in margin so the card is never one pixel too short for its own wrapped text — the
+     * original complaint about this area.
+     */
+    private final class MachineDetail extends JComponent {
+        private static final Font TITLE = Theme.monoBold(15);
+        private static final Font BODY  = Theme.mono(11);
+        private static final int ICON = 88, PAD = 12, GAP = 14;
+
+        MachineDetail() { setOpaque(false); }
+
+        /** Live width estimate, same trick {@link ItemRow#width()} uses. */
+        private int width() {
+            int parent = getParent() != null ? getParent().getWidth() - 20 : 0;
+            return parent > 60 ? parent : (getWidth() > 60 ? getWidth() : 300);
+        }
+
+        /** Width left for text once the icon column and padding are subtracted. */
+        private int textWidth() { return Math.max(80, width() - PAD * 2 - ICON - GAP); }
+
+        /**
+         * Height is the icon's height when nothing is selected (so the card doesn't shrink to a
+         * sliver and jump size the moment something is picked), otherwise the title plus a meta
+         * line, one line per cost resource (see {@link #paintComponent} for why cost isn't one
+         * joined line), and every wrapped line of {@link #describe} and the blurb — each counted
+         * at {@code BODY}'s line height plus 2px, a couple pixels more generous than {@link
+         * #paintComponent} actually uses per line, as headroom against clipping.
+         */
+        @Override public Dimension getPreferredSize() {
+            int w = width();
+            var fmT = getFontMetrics(TITLE);
+            var fm = getFontMetrics(BODY);
+            int textH;
+            if (selected == null) {
+                textH = ICON;
+            } else {
+                int lines = 1 + engine.priceOf(selected).size();    // meta + one line per cost entry
+                lines += Ui.wrap(describe(selected), fm, textWidth()).size();
+                lines += Ui.wrap(selected.spec().blurb(), fm, textWidth()).size();
+                textH = fmT.getHeight() + 6 + lines * (fm.getHeight() + 2);
+            }
+            return new Dimension(w, PAD * 2 + Math.max(ICON, textH));
+        }
+
+        @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
+
+        /**
+         * Draws the card frame, then either the empty-state hint or the icon plus title, meta,
+         * cost (color-coded by what's in stock, same convention {@link ItemRow} uses), and the
+         * wrapped {@link #describe} and blurb text.
+         */
+        @Override protected void paintComponent(Graphics graphics) {
+            var g = (Graphics2D) graphics;
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            g.setColor(new Color(23, 51, 80, 90));
+            g.fill(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 1));
+            g.setColor(Theme.LINE);
+            g.draw(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 1));
+
+            var fm = getFontMetrics(BODY);
+            if (selected == null) {
+                g.setFont(BODY);
+                g.setColor(Theme.DIM);
+                int y = getHeight() / 2 - fm.getHeight() / 2 + fm.getAscent();
+                for (String line : Ui.wrap("Click a machine above to see what it costs and does.", fm, getWidth() - PAD * 2)) {
+                    g.drawString(line, PAD, y);
+                    y += fm.getHeight() + 2;
+                }
+                return;
+            }
+
+            Machine m = selected;
+            Spec spec = m.spec();
+            boolean unlocked = engine.unlocked(m);
+
+            Composite old = g.getComposite();
+            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+            Art.paint(g, previewGroup(m), new Rectangle2D.Double(PAD, PAD, ICON, ICON), 0, false, 0.5);
+            g.setComposite(old);
+
+            int tx = PAD + ICON + GAP;
+            int tw = textWidth();
+            g.setFont(TITLE);
+            var fmT = g.getFontMetrics();
+            int y = PAD + fmT.getAscent();
+            g.setColor(Theme.CHALK);
+            g.drawString(spec.label(), tx, y);
+
+            g.setFont(BODY);
+            y += 6 + fm.getHeight();
+            String meta = unlocked ? spec.abbr() + "  built x" + engine.board.count(m) : "needs " + spec.tech().label;
+            g.setColor(unlocked ? Theme.DIM : Theme.HOT);
+            g.drawString(meta, tx, y);
+
+            // One resource per line, not joined inline with " · " like ItemRow's compact list
+            // rows do: this card's text column is narrower (the icon takes some of the width
+            // ItemRow gets to use), and a 3+ resource cost (e.g. the Quantum Replicator's
+            // matter/titanium/circuit) silently overflowed past the component's edge and got
+            // clipped when it was joined onto one line.
+            for (var e : engine.priceOf(m).entrySet()) {
+                y += fm.getHeight() + 2;
+                boolean have = engine.board.get(e.getKey()) >= e.getValue() - 1e-9;
+                g.setColor(have ? Theme.alpha(Theme.CHALK, 200) : Theme.HOT);
+                g.drawString(Fmt.n(e.getValue()) + " " + e.getKey().lower(), tx, y);
+            }
+
+            g.setColor(Theme.ICE);
+            for (String line : Ui.wrap(describe(m), fm, tw)) { y += fm.getHeight() + 2; g.drawString(line, tx, y); }
+            g.setColor(Theme.DIM);
+            for (String line : Ui.wrap(spec.blurb(), fm, tw)) { y += fm.getHeight() + 2; g.drawString(line, tx, y); }
         }
     }
 
@@ -962,6 +1247,8 @@ public final class Game implements BoardPanel.Handler {
                     "Supply has to meet draw. If it does not, everything slows to the fraction that can be covered. Capacitor Banks store surplus and cover spikes. Fuel burners only burn what the site actually needs."},
                 new String[]{"Throughput",
                     "Furnaces and assemblers scale their inputs with their outputs, so a fused smelter is a throughput monster that will strip your ore stock in seconds. Feed it more rigs."},
+                new String[]{"Victory",
+                    "The Fusion Reactor sits at the top of the research tree, gated behind Fission and Geometric Synergy II. Build your first one and the site declares victory - the masthead marks it permanently. Nothing stops afterward; there's no reason not to keep building."},
                 new String[]{"Controls",
                     "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
         }

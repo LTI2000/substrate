@@ -46,6 +46,11 @@ import java.util.Random;
  * folded into {@link Group#powered} by {@link Fusion#energise} — is derived fresh from it on
  * every {@link #recompute()}, because {@link Group} instances themselves don't survive a
  * recompute to be mutated. See {@link Board#off}'s Javadoc for the full reasoning.
+ *
+ * <p><b>Victory is a sticky flag, not a live board query.</b> {@link #place} sets {@link
+ * Board#won} the moment the player's first {@link Machine#TOKAMAK} goes down and never clears
+ * it, even if that reactor is later dismantled — it records that the site once reached the top
+ * of the tech tree, not that a reactor currently stands.
  */
 public final class Engine {
 
@@ -355,6 +360,13 @@ public final class Engine {
      * Places {@code m} at {@code (x, y)} if the cell is empty, inside the claim, ore-compatible
      * when required, and affordable, deducting {@link #priceOf(Machine)} on success.
      *
+     * <p>Placing the first {@link Machine#TOKAMAK} (Fusion Reactor) — the top of the tech tree,
+     * gated behind both {@link Tech#FISSION} and {@link Tech#GEO2} — is this game's victory
+     * condition: it latches {@link Board#won} permanently and logs the moment. The caller
+     * ({@link Game#pressed}) diffs {@code board.won} across this call to know whether to
+     * celebrate, rather than this method reporting it directly, since {@code place}'s
+     * boolean return is already spoken for as "did the placement succeed."
+     *
      * @return whether the placement succeeded
      */
     public boolean place(Machine m, int x, int y) {
@@ -368,6 +380,10 @@ public final class Engine {
         board.cell[i] = m;
         board.off[i] = false;
         board.built.merge(m, 1, Integer::sum);
+        if (m == Machine.TOKAMAK && !board.won) {
+            board.won = true;
+            board.logLine("Fusion Reactor online. The site has reached self-sustaining output.");
+        }
         dirty = true;
         return true;
     }

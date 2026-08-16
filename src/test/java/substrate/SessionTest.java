@@ -125,9 +125,9 @@ class SessionTest {
 
     /**
      * Checks that saving a board with {@link Save#write} and reading it back with
-     * {@link Save#read} reproduces the claim, tech, resources, cell layout and ore richness
-     * exactly, and that {@link Save#wipe} clears the save file so a subsequent read returns
-     * {@code null}.
+     * {@link Save#read} reproduces the claim, tech, resources, cell layout, ore richness and
+     * victory flag exactly, and that {@link Save#wipe} clears the save file so a subsequent
+     * read returns {@code null}.
      */
     @Test
     @DisplayName("a site survives the round trip through the save file")
@@ -137,6 +137,7 @@ class SessionTest {
         b.set(Res.MATTER, 100_000);
         e.research(Tech.TOOLS0);
         e.place(Machine.SOLAR, Board.CX + 1, Board.CY);
+        b.won = true;                                           // exercise the flag independently of the tech chain
         e.recompute();
 
         Save.write(b);
@@ -147,6 +148,7 @@ class SessionTest {
         assertEquals(b.get(Res.MATTER), back.get(Res.MATTER), 1e-6);
         assertArrayEqualsCells(b, back);
         assertTrue(Arrays.equals(b.rich, back.rich), "ore richness survives");
+        assertTrue(back.won, "victory survives the round trip too");
 
         Save.wipe();
         assertNull(Save.read(), "abandoning the site clears the file");
