@@ -260,8 +260,10 @@ public final class Game implements BoardPanel.Handler {
                 public boolean selected()   { return selected == m; }
                 public boolean done()       { return false; }
             }, () -> {
+                // Always selects m, even if it's already selected: clicking a build row is a
+                // one-way arm action now, not a toggle. Deselecting is Q's job (see bindKeys()).
                 if (!engine.unlocked(m)) return;
-                selected = selected == m ? null : m;
+                selected = m;
                 demolishing = false;
                 toggling = false;
                 boardPanel.setDemolishing(false);
@@ -492,9 +494,10 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear selection, D =
-     * toggle dismantle, P = toggle power switch) onto {@code root}'s input/action maps, active
-     * whenever the containing window has focus, regardless of which child component has it.
+     * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear everything, D =
+     * toggle dismantle, P = toggle power switch, Q = deselect the armed machine) onto {@code
+     * root}'s input/action maps, active whenever the containing window has focus, regardless of
+     * which child component has it.
      *
      * @param root the component whose input map the shortcuts are registered on
      */
@@ -538,6 +541,17 @@ public final class Game implements BoardPanel.Handler {
                 boardPanel.setGhost(null);
                 boardPanel.setDemolishing(false);
                 boardPanel.setToggling(toggling);
+                refresh();
+            }
+        });
+        im.put(KeyStroke.getKeyStroke("Q"), "deselect");
+        am.put("deselect", new AbstractAction() {
+            // Clicking a build row now only ever arms it (see buildTab()'s row handler) — it
+            // never deselects on a second click — so Q is the one dedicated way to drop the
+            // armed machine. Scoped to just the selection/ghost, unlike ESCAPE's clear-everything.
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                selected = null;
+                boardPanel.setGhost(null);
                 refresh();
             }
         });
@@ -949,7 +963,7 @@ public final class Game implements BoardPanel.Handler {
                 new String[]{"Throughput",
                     "Furnaces and assemblers scale their inputs with their outputs, so a fused smelter is a throughput monster that will strip your ore stock in seconds. Feed it more rigs."},
                 new String[]{"Controls",
-                    "Pick a machine, then click or drag across empty cells. Space taps the core. D toggles dismantle, which returns half. Escape clears the selection. The site saves itself every twenty seconds."});
+                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
         }
 
         /**
