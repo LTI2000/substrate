@@ -2,11 +2,14 @@ package substrate;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.Arc2D;
+import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 /**
  * Top-level Swing UI wiring for a session: assembles the board, ledger, status bar and the
@@ -16,14 +19,14 @@ import java.util.Map;
  * ItemRow}, ...) is a dumb view driven from here.
  *
  * <p>Nothing in the BUILD or RESEARCH tabs is backed by a proper view-model class. The RESEARCH
- * tab's rows and the BUILD tab's two tool rows and single detail row are each a fresh anonymous
- * {@link ItemRow.Model} inner class, closing over a loop variable ({@code t}) or over {@code
- * this} directly, plus this class's mutable fields ({@code selected}, {@code demolishing},
- * {@code toggling}). The BUILD tab's per-machine tiles go one step further and skip {@link
- * ItemRow} entirely — see {@link MachineIcon} — since a whole grid of them needs to stay small.
- * This is all functional-callback-style UI wiring: every row/tile is just a bundle of closures
- * re-evaluated on every repaint, so there is nothing to keep in sync — they always read current
- * engine state.
+ * tab's rows and the BUILD tab's single detail row are each a fresh anonymous {@link
+ * ItemRow.Model} inner class, closing over a loop variable ({@code t}) or over {@code this}
+ * directly, plus this class's mutable fields ({@code selected}, {@code demolishing}, {@code
+ * toggling}). The BUILD tab's per-machine tiles and its two tool tiles go one step further and
+ * skip {@link ItemRow} entirely — see {@link MachineIcon} and {@link ToolIcon} — since a whole
+ * grid of them needs to stay small. This is all functional-callback-style UI wiring: every
+ * row/tile is just a bundle of closures re-evaluated on every repaint, so there is nothing to
+ * keep in sync — they always read current engine state.
  */
 public final class Game implements BoardPanel.Handler {
 
@@ -185,10 +188,10 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the BUILD tab: the hint box, dedicated "Dismantle" and "Power Switch" rows, a grid
-     * of one {@link MachineIcon} per buildable {@link Machine}, and a single {@link
-     * MachineDetail} card beneath it showing full detail for whichever machine is currently
-     * {@link #selected}.
+     * Builds the BUILD tab: the hint box, a small row of {@link ToolIcon} tiles (Dismantle,
+     * Power Switch), a grid of one {@link MachineIcon} per buildable {@link Machine}, and a
+     * single {@link MachineDetail} card beneath it showing full detail for whichever machine is
+     * currently {@link #selected}.
      *
      * <p>Unlike the old one-{@link ItemRow}-per-machine layout, every icon is always present
      * (never hidden as tech unlocks) — a locked or unaffordable one just paints itself dimmed,
@@ -209,18 +212,19 @@ public final class Game implements BoardPanel.Handler {
         list.add(hint);
         list.add(Box.createVerticalStrut(6));
 
-        // Model/handler for the dismantle toggle row; a one-off anonymous Model since it isn't
-        // keyed to any Machine.
-        var demolish = new ItemRow(new ItemRow.Model() {
-            public String title()  { return "Dismantle"; }
-            public String meta()   { return demolishing ? "ON" : "half back"; }
-            public Map<Res, Double> cost() { return Map.of(); }
-            public String io()     { return "Click a machine to remove the whole block."; }
-            public String blurb()  { return ""; }
-            public boolean affordable() { return true; }
-            public boolean selected()   { return demolishing; }
-            public boolean done()       { return true; }
-        }, () -> {
+        list.add(new SectionLabel("Tools"));
+        // FlowLayout, not GridLayout: with only two tiles a GridLayout would stretch each one to
+        // half the panel's width, turning them into wide rectangles instead of small square
+        // icons. FlowLayout leaves them at their own preferred size and just left-aligns them,
+        // with unused width as blank space — a toolbar of small icons, not a stretched bar.
+        var tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        tools.setOpaque(false);
+        // Dismantle and Power Switch used to be full-width ItemRows with their own title/cost/
+        // blurb text; that's a lot of vertical space for two toggles with no per-machine detail
+        // to show. As ToolIcon tiles their description moves to a hover tooltip instead — see
+        // ToolIcon's Javadoc for why that trade (discoverable on hover, invisible otherwise) was
+        // fine here specifically.
+        var demolishIcon = new ToolIcon("DISM", Game::paintDismantleGlyph, () -> demolishing, () -> {
             demolishing = !demolishing;
             if (demolishing) selected = null;
             toggling = false;
@@ -229,20 +233,10 @@ public final class Game implements BoardPanel.Handler {
             boardPanel.setGhost(null);
             refresh();
         });
-        list.add(demolish);
-        list.add(Box.createVerticalStrut(5));
+        demolishIcon.setToolTipText("Dismantle: click a machine to remove the whole block, half cost back.");
+        tools.add(demolishIcon);
 
-        // Model/handler for the power-switch toggle row; same one-off pattern as demolish above.
-        var powerSwitch = new ItemRow(new ItemRow.Model() {
-            public String title()  { return "Power Switch"; }
-            public String meta()   { return toggling ? "ON" : "no refund"; }
-            public Map<Res, Double> cost() { return Map.of(); }
-            public String io()     { return "Click a machine to switch its whole block on or off."; }
-            public String blurb()  { return "Off machines draw no power and make nothing, but stay built."; }
-            public boolean affordable() { return true; }
-            public boolean selected()   { return toggling; }
-            public boolean done()       { return true; }
-        }, () -> {
+        var powerIcon = new ToolIcon("PWR", Game::paintPowerGlyph, () -> toggling, () -> {
             toggling = !toggling;
             if (toggling) selected = null;
             demolishing = false;
@@ -251,7 +245,12 @@ public final class Game implements BoardPanel.Handler {
             boardPanel.setGhost(null);
             refresh();
         });
-        list.add(powerSwitch);
+        powerIcon.setToolTipText("Power Switch: click a machine to switch its whole block on or off. "
+                + "Off machines draw no power and make nothing, but stay built.");
+        tools.add(powerIcon);
+        // Fixes the row's height to the tiles' natural size, same reason the machine grid below does.
+        tools.setMaximumSize(new Dimension(Integer.MAX_VALUE, tools.getPreferredSize().height));
+        list.add(tools);
         list.add(Box.createVerticalStrut(10));
         list.add(new SectionLabel("Machines"));
 
@@ -835,6 +834,104 @@ public final class Game implements BoardPanel.Handler {
             g.setColor(Theme.LINE2);
             g.drawLine(0, 32, getWidth(), 32);
         }
+    }
+
+    /**
+     * A small square board-tool toggle (Dismantle, Power Switch) in the BUILD tab: same size and
+     * on/off-border convention as {@link MachineIcon}, but for a tool rather than a buildable
+     * machine — no owned-count badge, and the icon is a small hand-drawn glyph (passed in as
+     * {@code glyph}) instead of an {@link Art} preview, since there's no machine to render.
+     *
+     * <p>Dismantle and Power Switch used to be full-width {@link ItemRow}s with their own
+     * title/cost/blurb text. As a tile there's no room left for that description, so it moves to
+     * a hover tooltip (set by the caller via {@link #setToolTipText}) instead of a permanent
+     * on-screen line — a deliberate trade of "always visible" for "small," acceptable here
+     * because these two tools are used constantly once learned and the description is exactly
+     * the kind of thing a player only needs to re-check once in a while, not every glance.
+     */
+    private final class ToolIcon extends JComponent {
+        /** Short caption drawn along the bottom edge, e.g. {@code "DISM"}. */
+        private final String caption;
+        /** Draws the tool's glyph into the given icon-area rectangle, in local (0,0-origin) coordinates. */
+        private final java.util.function.BiConsumer<Graphics2D, Rectangle2D> glyph;
+        /** Whether this tool is the one currently armed; drives the amber wash/border. */
+        private final BooleanSupplier active;
+        /** Whether the pointer is currently over this tile; drives the hover border/wash. */
+        private boolean hover;
+
+        ToolIcon(String caption, java.util.function.BiConsumer<Graphics2D, Rectangle2D> glyph,
+                 BooleanSupplier active, Runnable onClick) {
+            this.caption = caption;
+            this.glyph = glyph;
+            this.active = active;
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
+                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                @Override public void mousePressed(java.awt.event.MouseEvent e) { onClick.run(); }
+            });
+        }
+
+        /** Fixed square tile, matching {@link MachineIcon#getPreferredSize()} so the two read as one family of controls. */
+        @Override public Dimension getPreferredSize() { return new Dimension(74, 74); }
+
+        /** Draws the background wash and border (colored by hover/active state), the glyph, and the caption. */
+        @Override protected void paintComponent(Graphics graphics) {
+            var g = (Graphics2D) graphics;
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            boolean on = active.getAsBoolean();
+            int w = getWidth(), h = getHeight();
+
+            g.setColor(on ? Theme.alpha(Theme.AMBER, 30) : new Color(52, 42, 28, hover ? 130 : 70));
+            g.fillRect(0, 0, w, h);
+
+            double pad = 15, captionH = 13;
+            glyph.accept(g, new Rectangle2D.Double(pad, pad, w - pad * 2, h - pad * 2 - captionH));
+
+            g.setFont(Theme.mono(9));
+            g.setColor(on ? Theme.AMBER : Theme.DIM);
+            g.drawString(caption, (w - g.getFontMetrics().stringWidth(caption)) / 2f, h - 4);
+
+            g.setColor(on ? Theme.AMBER : hover ? Theme.LINE2 : Theme.LINE);
+            g.drawRect(0, 0, w - 1, h - 1);
+        }
+    }
+
+    /**
+     * {@link ToolIcon} glyph for Dismantle: a dark steel block with a bold rust-red "X" through
+     * it — a universal "this gets broken" pictogram, drawn in a fixed danger color regardless of
+     * whether the tool is currently armed (the tile's wash/border already carries that state, the
+     * same separation {@link MachineIcon} keeps between its {@link Art} preview and its own
+     * selection styling).
+     */
+    private static void paintDismantleGlyph(Graphics2D g, Rectangle2D r) {
+        g.setColor(Theme.alpha(Theme.STEEL_DARK, 230));
+        g.fill(r);
+        g.setColor(new Color(0, 0, 0, 90));
+        g.draw(r);
+        g.setColor(Theme.alpha(Theme.HOT, 220));
+        g.setStroke(new BasicStroke((float) (r.getWidth() * 0.13), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        double in = r.getWidth() * 0.18;
+        g.draw(new Line2D.Double(r.getMinX() + in, r.getMinY() + in, r.getMaxX() - in, r.getMaxY() - in));
+        g.draw(new Line2D.Double(r.getMaxX() - in, r.getMinY() + in, r.getMinX() + in, r.getMaxY() - in));
+    }
+
+    /**
+     * {@link ToolIcon} glyph for Power Switch: the universal power-button pictogram (a broken
+     * ring plus a vertical tick through the gap), in a neutral chalk tone for the same reason
+     * {@link #paintDismantleGlyph} fixes its color regardless of armed state.
+     */
+    private static void paintPowerGlyph(Graphics2D g, Rectangle2D r) {
+        double cx = r.getCenterX(), cy = r.getCenterY();
+        double rad = Math.min(r.getWidth(), r.getHeight()) * 0.4;
+        g.setColor(Theme.alpha(Theme.CHALK, 210));
+        g.setStroke(new BasicStroke((float) (rad * 0.34), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(new Arc2D.Double(cx - rad, cy - rad, rad * 2, rad * 2, 55, 250, Arc2D.OPEN));
+        g.draw(new Line2D.Double(cx, cy - rad * 1.3, cx, cy - rad * 0.1));
     }
 
     /**
