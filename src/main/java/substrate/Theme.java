@@ -7,43 +7,55 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Cyanotype survey chart for the chrome, honest industrial greys for the machines. Central
+ * Sun-scorched survey chart for the chrome, dirty industrial greys for the machines. Central
  * palette, font lookup, and small color-arithmetic helpers shared by every painted component so
  * nobody hand-mixes an RGB triple outside this file.
+ *
+ * <p>The whole chrome layer is warm and desaturated on purpose — dust and rust rather than the
+ * clean cyanotype-blueprint look an earlier pass had. {@link #GRID}/{@link #LINE}/{@link
+ * #LINE2}/{@link #DIM} are all the same dusty tan family at different weights, {@link #CHALK} is
+ * bone/parchment rather than cool white, and the three status accents ({@link #AMBER}, {@link
+ * #HOT}, {@link #GOOD}) are each deliberately harsher or grimier than a "clean" idle game would
+ * use: rust-orange, blood-rust red, and a sickly irradiated olive rather than a pleasant teal.
+ * {@link #ICE} is the one surviving cool accent, kept exactly so it still reads as a lone
+ * flickering readout against the warm backdrop rather than because it fits the palette.
  */
 public final class Theme {
     private Theme() {}
 
     // -- Chrome palette: UI backgrounds, grid lines, and status colors. --
-    /** Darkest background, used behind everything else. */
-    public static final Color INK      = new Color(0x08, 0x13, 0x1F);
-    /** Chart/paper background. */
-    public static final Color PAPER    = new Color(0x0F, 0x23, 0x37);
+    /** Darkest background, used behind everything else — scorched, near-black umber. */
+    public static final Color INK      = new Color(0x15, 0x10, 0x0A);
+    /** Chart/paper background: dark, dusty brown instead of dark blue. */
+    public static final Color PAPER    = new Color(0x2A, 0x21, 0x15);
     /** Panel background, one step lighter than {@link #PAPER}. */
-    public static final Color PANEL    = new Color(0x10, 0x26, 0x39);
-    /** Faint grid lines. */
-    public static final Color GRID     = new Color(184, 219, 247, 26);
+    public static final Color PANEL    = new Color(0x30, 0x26, 0x18);
+    /** Faint grid lines: dusty tan, not cyan. */
+    public static final Color GRID     = new Color(196, 168, 122, 24);
     /** Standard rule/border line. */
-    public static final Color LINE     = new Color(184, 219, 247, 45);
+    public static final Color LINE     = new Color(196, 168, 122, 42);
     /** Heavier rule/border line. */
-    public static final Color LINE2    = new Color(184, 219, 247, 90);
-    /** Primary text color. */
-    public static final Color CHALK    = new Color(0xDB, 0xE9, 0xF5);
-    /** Secondary/muted text color. */
-    public static final Color DIM      = new Color(0x7A, 0x9A, 0xB5);
-    /** Warning/attention accent. */
-    public static final Color AMBER    = new Color(0xFF, 0xB4, 0x3A);
-    /** Alert/negative accent. */
-    public static final Color HOT      = new Color(0xFF, 0x6B, 0x45);
-    /** Positive/success accent. */
-    public static final Color GOOD     = new Color(0x63, 0xD6, 0xA8);
-    /** Cool accent for icy/frost readouts. */
-    public static final Color ICE      = new Color(0xA8, 0xC4, 0xDC);
+    public static final Color LINE2    = new Color(196, 168, 122, 88);
+    /** Primary text color: bone/parchment, not cool white-blue. */
+    public static final Color CHALK    = new Color(0xE9, 0xDC, 0xC2);
+    /** Secondary/muted text color: muted khaki/taupe, not blue-grey. */
+    public static final Color DIM      = new Color(0x8F, 0x7E, 0x62);
+    /** Warning/attention accent: a deeper, grittier rust-amber than a clean idle-game amber. */
+    public static final Color AMBER    = new Color(0xE0, 0x8A, 0x2E);
+    /** Alert/negative accent: a harsher, more blood-rust red than a bright alarm orange-red. */
+    public static final Color HOT      = new Color(0xBE, 0x3A, 0x28);
+    /** Positive/success accent: a sickly, irradiated olive-green rather than a pleasant teal. */
+    public static final Color GOOD     = new Color(0x93, 0xA3, 0x3C);
+    /** Cool accent for machine status readouts — the one deliberately-cool color left, so it still pops against the warm chrome. */
+    public static final Color ICE      = new Color(0x86, 0xB0, 0xAE);
 
     // -- Machine material palette: used by Art to paint machine bodies. --
-    public static final Color STEEL      = new Color(0x8C, 0x97, 0xA3);
-    public static final Color STEEL_DARK = new Color(0x4C, 0x56, 0x62);
-    public static final Color CONCRETE   = new Color(0x6B, 0x70, 0x76);
+    /** Warmer, dirtier steel than a clean blue-grey. */
+    public static final Color STEEL      = new Color(0x8C, 0x82, 0x70);
+    /** Warm dark steel/rust shadow. */
+    public static final Color STEEL_DARK = new Color(0x4A, 0x42, 0x36);
+    /** Dirtier, warmer concrete. */
+    public static final Color CONCRETE   = new Color(0x6B, 0x62, 0x51);
     public static final Color BRICK      = new Color(0x8E, 0x5A, 0x45);
     public static final Color COPPER     = new Color(0xB5, 0x72, 0x43);
     public static final Color GLASS      = new Color(0x18, 0x36, 0x55);

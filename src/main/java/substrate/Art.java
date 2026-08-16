@@ -188,7 +188,7 @@ public final class Art {
         if (ore == null) return;
         double pw = 9.5 * u, ph = 6 * u;
         var plate = new RoundRectangle2D.Double(px, py, pw, ph, 1.5, 1.5);
-        g.setColor(new Color(0x0E, 0x16, 0x20));
+        g.setColor(new Color(0x1A, 0x14, 0x0C));
         g.fill(plate);
         g.setColor(Theme.alpha(ore.color, 70));
         g.fill(new RoundRectangle2D.Double(px + 0.8, py + 0.8, pw - 1.6, ph * 0.42, 1, 1));

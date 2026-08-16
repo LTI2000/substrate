@@ -91,7 +91,7 @@ public final class ItemRow extends JComponent {
         if (dim) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
 
         g.setColor(model.selected() ? Theme.alpha(Theme.AMBER, 26)
-                : hover ? new Color(23, 51, 80, 200) : new Color(23, 51, 80, 90));
+                : hover ? new Color(52, 42, 28, 200) : new Color(52, 42, 28, 90));
         g.fill(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 3));
         g.setColor(model.selected() ? Theme.AMBER : Theme.LINE);
         g.draw(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 3));

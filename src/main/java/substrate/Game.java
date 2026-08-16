@@ -104,9 +104,9 @@ public final class Game implements BoardPanel.Handler {
         var root = new JPanel(new BorderLayout(10, 10)) {
             @Override protected void paintComponent(Graphics g) {
                 var g2 = (Graphics2D) g;
-                g2.setPaint(new GradientPaint(0, 0, new Color(0x11, 0x24, 0x38), getWidth(), getHeight(), Theme.INK));
+                g2.setPaint(new GradientPaint(0, 0, new Color(0x24, 0x1C, 0x10), getWidth(), getHeight(), Theme.INK));
                 g2.fillRect(0, 0, getWidth(), getHeight());
-                g2.setColor(new Color(184, 219, 247, 10));
+                g2.setColor(new Color(196, 168, 122, 12));
                 for (int x = 0; x < getWidth(); x += 40) g2.drawLine(x, 0, x, getHeight());
                 for (int y = 0; y < getHeight(); y += 40) g2.drawLine(0, y, getWidth(), y);
             }
@@ -157,7 +157,7 @@ public final class Game implements BoardPanel.Handler {
         var panel = new JPanel(new BorderLayout()) {
             @Override protected void paintComponent(Graphics g) {
                 var g2 = (Graphics2D) g;
-                g2.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x0C, 0x1C, 0x2C)));
+                g2.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x1E, 0x17, 0x0E)));
                 g2.fillRect(0, 0, getWidth(), getHeight());
                 g2.setColor(Theme.LINE2);
                 g2.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
@@ -894,7 +894,7 @@ public final class Game implements BoardPanel.Handler {
             boolean isSelected = selected == machine;
             int w = getWidth(), h = getHeight();
 
-            g.setColor(isSelected ? Theme.alpha(Theme.AMBER, 30) : new Color(23, 51, 80, hover ? 130 : 70));
+            g.setColor(isSelected ? Theme.alpha(Theme.AMBER, 30) : new Color(52, 42, 28, hover ? 130 : 70));
             g.fillRect(0, 0, w, h);
 
             Composite old = g.getComposite();
@@ -1010,7 +1010,7 @@ public final class Game implements BoardPanel.Handler {
             g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-            g.setColor(new Color(23, 51, 80, 90));
+            g.setColor(new Color(52, 42, 28, 90));
             g.fill(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 1));
             g.setColor(Theme.LINE);
             g.draw(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 1));
@@ -1302,7 +1302,7 @@ public final class Game implements BoardPanel.Handler {
                 }
                 y += 14;
                 g.setFont(Theme.mono(11));
-                g.setColor(new Color(0xB6, 0xCE, 0xE2));
+                g.setColor(new Color(0xD8, 0xC9, 0xA8));
                 for (String line : Ui.wrap(s[1], fm, wrapWidth())) {
                     g.drawString(line, 8, y);
                     y += fm.getHeight() + 1;

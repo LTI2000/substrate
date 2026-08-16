@@ -156,12 +156,12 @@ public final class BoardPanel extends JComponent {
         double ox = originX(cs), oy = originY(cs);
         double size = cs * Board.W;
 
-        g.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x0C, 0x1C, 0x2C)));
+        g.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x1E, 0x17, 0x0E)));
         g.fillRect(0, 0, getWidth(), getHeight());
         g.setColor(Theme.LINE2);
         g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
 
-        g.setColor(new Color(0x0B, 0x1B, 0x2B));
+        g.setColor(new Color(0x1C, 0x15, 0x0D));
         g.fill(new Rectangle2D.Double(ox, oy, size, size));
 
         Board b = engine.board;
@@ -173,9 +173,9 @@ public final class BoardPanel extends JComponent {
                 double px = ox + x * cs, py = oy + y * cs;
                 boolean claimed = b.inClaim(x, y);
                 if (!claimed) {
-                    g.setColor(new Color(0x0A, 0x17, 0x25));
+                    g.setColor(new Color(0x12, 0x0D, 0x07));
                     g.fill(new Rectangle2D.Double(px, py, cs, cs));
-                    g.setColor(new Color(184, 219, 247, 9));
+                    g.setColor(new Color(196, 168, 122, 10));
                     g.setStroke(new BasicStroke(1f));
                     for (double d = 0; d < cs * 2; d += 5)
                         g.draw(new Line2D.Double(px + d, py + cs, px + d - cs, py));
