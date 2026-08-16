@@ -1,0 +1,154 @@
+package substrate;
+
+import javax.swing.JComponent;
+import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.geom.Rectangle2D;
+import java.util.List;
+import java.util.Map;
+
+/** One entry in the build or research list: title, price, what it does, why you care. */
+public final class ItemRow extends JComponent {
+
+    /** What a row needs to render itself; implemented per-item by the build/research lists. */
+    public interface Model {
+        /** Display name of the item. */
+        String title();
+        /** Right-aligned status text (e.g. owned count), or blank/null if none. */
+        String meta();
+        /** Resource cost to acquire the item, empty if free or already {@link #done()}. */
+        Map<Res, Double> cost();
+        /** Short input/output description line. */
+        String io();
+        /** Flavor/explanation line. */
+        String blurb();
+        /** Whether the player currently has enough resources to buy this. */
+        boolean affordable();
+        /** Whether this row is the currently selected item. */
+        boolean selected();
+        /** Whether the item is already owned/researched (hides the cost line). */
+        boolean done();
+    }
+
+    private static final Font TITLE = Theme.mono(12);
+    private static final Font SMALL = Theme.mono(10);
+
+    private final Model model;
+    /** Whether the mouse is currently over the row; drives the hover highlight. */
+    private boolean hover;
+
+    /** @param onClick invoked when the row is clicked, regardless of affordability */
+    public ItemRow(Model model, Runnable onClick) {
+        this.model = model;
+        setOpaque(false);
+        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        addMouseListener(new MouseAdapter() {
+            @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+            @Override public void mouseExited(MouseEvent e)  { hover = false; repaint(); }
+            @Override public void mouseClicked(MouseEvent e) { onClick.run(); }
+        });
+    }
+
+    /** Stable width estimate: the enclosing list is laid out before the rows are measured. */
+    private int width() {
+        int parent = getParent() != null ? getParent().getWidth() - 20 : 0;
+        if (parent > 60) return parent;
+        return getWidth() > 60 ? getWidth() : 300;
+    }
+
+    /** Text column width: the row width minus fixed left/right padding, with a floor so wrapping never collapses to nothing. */
+    private int textWidth() { return Math.max(80, width() - 16); }
+
+    /** Computed from the wrapped line counts of {@link Model#io()} and {@link Model#blurb()}, plus a cost line unless {@link Model#done()}. */
+    @Override public Dimension getPreferredSize() {
+        int w = width();
+        if (w < 0) w = 300;
+        var fmSmall = getFontMetrics(SMALL);
+        int lines = 0;
+        if (!model.done()) lines++;                                  // cost
+        lines += Ui.wrap(model.io(), fmSmall, textWidth()).size();
+        lines += Ui.wrap(model.blurb(), fmSmall, textWidth()).size();
+        int h = 8 + getFontMetrics(TITLE).getHeight() + lines * (fmSmall.getHeight() - 1) + 6;
+        return new Dimension(w, h);
+    }
+
+    /** Unbounded width, fixed height: lets the row stretch to fill a vertical list while keeping its own computed height. */
+    @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
+
+    /** Draws the row: background/border, title and meta, the cost line (if not done), then the io and blurb text wrapped to width. */
+    @Override protected void paintComponent(Graphics graphics) {
+        var g = (Graphics2D) graphics;
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        boolean dim = !model.affordable() && !model.done();
+        Composite old = g.getComposite();
+        if (dim) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+
+        g.setColor(model.selected() ? Theme.alpha(Theme.AMBER, 26)
+                : hover ? new Color(23, 51, 80, 200) : new Color(23, 51, 80, 90));
+        g.fill(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 3));
+        g.setColor(model.selected() ? Theme.AMBER : Theme.LINE);
+        g.draw(new Rectangle2D.Double(0, 0, getWidth() - 1, getHeight() - 3));
+
+        int x = 6;
+        g.setFont(TITLE);
+        var fmT = g.getFontMetrics();
+        int y = 4 + fmT.getAscent();
+        g.setColor(Theme.CHALK);
+        g.drawString(model.title(), x, y);
+        g.setFont(SMALL);
+        var fm = g.getFontMetrics();
+        String meta = model.meta();
+        if (meta != null && !meta.isEmpty()) {
+            g.setColor(model.done() ? Theme.GOOD : Theme.DIM);
+            g.drawString(meta, getWidth() - 6 - fm.stringWidth(meta), y);
+        }
+
+        y += 2;
+        if (!model.done()) {
+            y += fm.getHeight() - 1;
+            float cx = x;
+            boolean first = true;
+            for (var e : model.cost().entrySet()) {
+                if (!first) {
+                    g.setColor(Theme.DIM);
+                    g.drawString(" \u00b7 ", cx, y);
+                    cx += fm.stringWidth(" \u00b7 ");
+                }
+                first = false;
+                boolean have = model.done() || engineHas(e.getKey(), e.getValue());
+                String s = Fmt.n(e.getValue()) + " " + e.getKey().lower();
+                g.setColor(have ? Theme.alpha(Theme.CHALK, 200) : Theme.HOT);
+                g.drawString(s, cx, y);
+                cx += fm.stringWidth(s);
+            }
+        }
+        for (String line : List.of(model.io(), model.blurb())) {
+            boolean blurb = line.equals(model.blurb());
+            g.setColor(blurb ? Theme.DIM : Theme.ICE);
+            for (String piece : Ui.wrap(line, fm, textWidth())) {
+                y += fm.getHeight() - 1;
+                g.drawString(piece, x, y);
+            }
+        }
+        g.setComposite(old);
+    }
+
+    /**
+     * Set once by {@code Game}'s constructor so rows can colour prices by what is in stock.
+     *
+     * <p>This is an informal singleton / dependency-injection workaround: {@link Model}
+     * has no reference to a {@link Board}, and threading one through the interface (and
+     * every implementation of it) just for this one cosmetic check would spread a
+     * dependency across code that otherwise doesn't need it. A shared static is the
+     * cheaper trade-off here since there is only ever one {@link Board} per process.
+     */
+    static Board stock;
+
+    /** Whether {@code stock} holds at least {@code amount} of {@code r}, tolerant of floating-point drift. */
+    private static boolean engineHas(Res r, double amount) {
+        return stock == null || stock.get(r) >= amount - 1e-9;
+    }
+}
