@@ -127,6 +127,24 @@ an oversight.
   main thread, before the window even shows. No closed-form fast-forward.
   (`src/main/java/substrate/Engine.java:286-293`)
 
+- **The manual power switch lives on `Board`, not on `Group`, because `Group`
+  doesn't survive long enough to hold it** — `Group` instances are rebuilt
+  from scratch on every `recompute()` (same reasoning as the ore/richness
+  fields), so a "switched off" flag set directly on one would evaporate the
+  moment an unrelated board edit triggered a rebuild. `Engine.toggle` instead
+  writes to a per-cell `Board.off[]` array; `Fusion.make` reads it back into
+  each fresh `Group.enabled`, and `Fusion.energise` folds that into
+  `Group.powered` (`on && enabled`) so every existing caller of `powered`
+  — the tick loop, the renderer's dead-machine overlay, the hover readout —
+  automatically respects a manual toggle with no changes of its own. The one
+  wrinkle: if a switched-off block later fuses with an adjacent switched-on
+  one before being re-toggled, the merged group is `enabled` only if *every*
+  one of its cells is still on — an edge case that can't come up any other
+  way, resolved by erring toward "off" rather than silently reactivating
+  something the player turned off.
+  (`src/main/java/substrate/Board.java` (`off`), `src/main/java/substrate/Fusion.java` (`make`, `energise`),
+  `src/main/java/substrate/Engine.java` (`toggle`))
+
 ## Persistence
 
 - **Hand-rolled key=value save format**, no JSON, no schema — nested
@@ -134,6 +152,14 @@ an oversight.
   whole 225-cell board as a flat comma-joined list of enum names or `-` for
   empty. Lives at `~/.substrate/site.txt`.
   (`src/main/java/substrate/Save.java`)
+
+- **One field breaks the flat-per-cell-list pattern on purpose** — every
+  other board array (`cells=`, `ore=`) is serialized positionally, one entry
+  per cell, `-` standing in for empty. `off=` (manually switched-off cells)
+  is the one exception: since only a handful of cells are ever set, it's a
+  sparse comma-joined list of flat indices instead of another 225-entry
+  positional list.
+  (`src/main/java/substrate/Save.java` (`off`))
 
 - **"Deliberately forgiving on read"** — the class comment says this
   outright. Every field falls back to a hardcoded default via

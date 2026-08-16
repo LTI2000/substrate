@@ -18,8 +18,23 @@ public final class Group {
     public final Res ore;
     /** Richness of the underlying ore, meaningless when {@link #ore} is {@code null}. */
     public final double richness;
+    /**
+     * Whether the player has left this group switched on, as opposed to manually turned off via
+     * {@link Engine#toggle}. Read once at construction from {@link Board#off} (see that field's
+     * Javadoc for why the source of truth lives there instead of here) and never mutated
+     * afterward — like {@link #ore} and {@link #richness}, a fresh value simply gets baked into
+     * the next {@link Group} built at this spot. Folded into {@link #powered} by {@link
+     * Fusion#energise}, so nothing downstream needs to check both flags.
+     */
+    public final boolean enabled;
 
-    /** Whether this group is currently connected to the core and receiving power; recomputed whenever the site changes. */
+    /**
+     * Whether this group is currently connected to the core AND {@link #enabled}, i.e. actually
+     * receiving power; recomputed whenever the site changes. A structurally linked but manually
+     * disabled group reads as unpowered here even though its footprint still conducts power
+     * through to whatever fuses or wires past it (see {@link Fusion#energise}) — only its own
+     * draw/output stops.
+     */
     public boolean powered;
     /** Output multiplier from external effects (e.g. amplifiers), separate from {@link #fusionFactor}. */
     public double mult = 1;
@@ -36,12 +51,14 @@ public final class Group {
      * @param cells    flat indices of every cell in the group
      * @param ore      underlying ore, or {@code null}
      * @param richness underlying ore richness
+     * @param enabled  whether the player has left this group switched on (see {@link #enabled})
      */
-    Group(int id, Machine type, int x, int y, int w, int h, int[] cells, Res ore, double richness) {
+    Group(int id, Machine type, int x, int y, int w, int h, int[] cells, Res ore, double richness, boolean enabled) {
         this.id = id; this.type = type;
         this.x = x; this.y = y; this.w = w; this.h = h;
         this.area = w * h; this.cells = cells;
         this.ore = ore; this.richness = richness;
+        this.enabled = enabled;
     }
 
     /** @return {@code true} if this group is more than a single cell — i.e. has actually fused. */

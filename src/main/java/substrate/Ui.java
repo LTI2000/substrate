@@ -105,9 +105,10 @@ public final class Ui {
             this.action = action;
             setFont(Theme.mono(10));
             addMouseListener(new java.awt.event.MouseAdapter() {
-                @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
-                @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
-                @Override public void mouseClicked(java.awt.event.MouseEvent e) { action.run(); }
+                @Override public void mouseEntered(java.awt.event.MouseEvent e)  { hover = true; repaint(); }
+                @Override public void mouseExited(java.awt.event.MouseEvent e)   { hover = false; repaint(); }
+                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                @Override public void mousePressed(java.awt.event.MouseEvent e) { action.run(); }
             });
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         }

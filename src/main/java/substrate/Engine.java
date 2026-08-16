@@ -40,6 +40,12 @@ import java.util.Random;
  * the end of {@link #tick(double)}) purely so the on-screen ledger doesn't visibly jitter
  * tick to tick. There is no simulation reason for the smoothing; it exists only to make the
  * numbers pleasant to read.
+ *
+ * <p><b>Manually switching a group off is a per-cell board flag, not a group flag.</b>
+ * {@link #toggle(Group, boolean)} writes to {@link Board#off}, and {@link Group#enabled} —
+ * folded into {@link Group#powered} by {@link Fusion#energise} — is derived fresh from it on
+ * every {@link #recompute()}, because {@link Group} instances themselves don't survive a
+ * recompute to be mutated. See {@link Board#off}'s Javadoc for the full reasoning.
  */
 public final class Engine {
 
@@ -360,6 +366,7 @@ public final class Engine {
         if (!affordable(price)) return false;
         spend(price);
         board.cell[i] = m;
+        board.off[i] = false;
         board.built.merge(m, 1, Integer::sum);
         dirty = true;
         return true;
@@ -383,8 +390,26 @@ public final class Engine {
         for (int k = 0; k < g.area; k++) factor += Math.pow(1.14, Math.max(0, owned - 1 - k));
         for (var e : g.type.spec().cost().entrySet())
             board.add(e.getKey(), e.getValue() * factor * 0.5);
-        for (int i : g.cells) board.cell[i] = null;
+        for (int i : g.cells) { board.cell[i] = null; board.off[i] = false; }
         board.built.put(g.type, Math.max(0, owned - g.area));
+        dirty = true;
+    }
+
+    /**
+     * Manually switches every cell of {@code g} on or off. A disabled group stops drawing
+     * power and stops working on the next {@link #tick(double)} (see the guard at the top of
+     * its main loop), but keeps conducting power through to whatever is fused or wired past it
+     * (see {@link Fusion#energise}) — only its own draw and output stop. The core can't be
+     * switched off. The change is recorded on {@link Board#off}, not on the transient {@link
+     * Group} passed in, so it survives the {@link #recompute()} that {@link #markDirty()}
+     * forces on the next read.
+     *
+     * @param g  the group to switch, ignored if it is the core or {@code null}
+     * @param on {@code true} to switch on, {@code false} to switch off
+     */
+    public void toggle(Group g, boolean on) {
+        if (g == null || g.type == Machine.CORE) return;
+        for (int i : g.cells) board.off[i] = !on;
         dirty = true;
     }
 

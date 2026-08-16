@@ -40,8 +40,21 @@ public final class Game implements BoardPanel.Handler {
     private final List<TabButton> tabs = new ArrayList<>();
     /** Build-list rows keyed by machine, so {@link #refresh()} can show/hide them as tech unlocks. */
     private final Map<Machine, ItemRow> buildRows = new EnumMap<>(Machine.class);
-    /** Research-list rows keyed by tech; currently populated once and never hidden. */
+    /**
+     * Research rows keyed by tech, so {@link #refresh()} can find a just-completed row and move
+     * it from {@link #unfinishedTechs} to {@link #finishedTechs}.
+     */
     private final Map<Tech, ItemRow> techRows = new EnumMap<>(Tech.class);
+    /** Research rows not yet completed, in the RESEARCH tab above the {@link #finishedLabel} divider. */
+    private final JPanel unfinishedTechs = new JPanel();
+    /**
+     * Completed research rows, below the {@link #finishedLabel} divider. Only ever grows —
+     * research can't be undone — so {@link #refresh()} just moves a row here once and never
+     * moves it back.
+     */
+    private final JPanel finishedTechs = new JPanel();
+    /** Divider between {@link #unfinishedTechs} and {@link #finishedTechs}; hidden until the first tech completes. */
+    private final SectionLabel finishedLabel = new SectionLabel("Completed");
     /** The in-game manual/log panel shown under the MANUAL tab. */
     private final Manual manual;
 
@@ -49,6 +62,8 @@ public final class Game implements BoardPanel.Handler {
     private Machine selected;
     /** Whether the board is in dismantle mode (click a machine to remove its block). */
     private boolean demolishing;
+    /** Whether the board is in power-switch mode (click a machine to toggle its whole block on/off). */
+    private boolean toggling;
     /** Wall-clock timestamp of the last simulation tick, used to compute {@code dt} in {@link #start()}. */
     private long lastTick = System.nanoTime();
     /** Set by {@link #hovered} whenever the pointer is over the board; currently unread elsewhere but kept for future use. */
@@ -161,15 +176,17 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the BUILD tab: the hint box, a dedicated "Dismantle" row, and one {@link ItemRow}
-     * per buildable {@link Machine}.
+     * Builds the BUILD tab: the hint box, dedicated "Dismantle" and "Power Switch" rows, and
+     * one {@link ItemRow} per buildable {@link Machine}.
      *
      * <p>Each row's {@link ItemRow.Model} and click handler are anonymous inner classes created
      * fresh inside the loop, closing over the loop variable {@code m} and over this class's
-     * mutable state ({@code engine}, {@code selected}, {@code demolishing}). There is no
-     * intermediate view-model object; the closures are read live by {@link ItemRow} on every
-     * repaint, so a row always reflects current engine state without any explicit refresh wiring
-     * beyond calling {@link #refresh()} after a state change.
+     * mutable state ({@code engine}, {@code selected}, {@code demolishing}, {@code toggling}).
+     * There is no intermediate view-model object; the closures are read live by {@link ItemRow}
+     * on every repaint, so a row always reflects current engine state without any explicit
+     * refresh wiring beyond calling {@link #refresh()} after a state change. The three tools
+     * (placing a selected machine, dismantling, power-switching) are mutually exclusive, so
+     * every row's handler clears the other two.
      *
      * @return the scrollable BUILD tab body
      */
@@ -195,11 +212,35 @@ public final class Game implements BoardPanel.Handler {
         }, () -> {
             demolishing = !demolishing;
             if (demolishing) selected = null;
+            toggling = false;
+            boardPanel.setToggling(false);
             boardPanel.setDemolishing(demolishing);
             boardPanel.setGhost(null);
             refresh();
         });
         list.add(demolish);
+        list.add(Box.createVerticalStrut(5));
+
+        // Model/handler for the power-switch toggle row; same one-off pattern as demolish above.
+        var powerSwitch = new ItemRow(new ItemRow.Model() {
+            public String title()  { return "Power Switch"; }
+            public String meta()   { return toggling ? "ON" : "no refund"; }
+            public Map<Res, Double> cost() { return Map.of(); }
+            public String io()     { return "Click a machine to switch its whole block on or off."; }
+            public String blurb()  { return "Off machines draw no power and make nothing, but stay built."; }
+            public boolean affordable() { return true; }
+            public boolean selected()   { return toggling; }
+            public boolean done()       { return true; }
+        }, () -> {
+            toggling = !toggling;
+            if (toggling) selected = null;
+            demolishing = false;
+            boardPanel.setDemolishing(false);
+            boardPanel.setToggling(toggling);
+            boardPanel.setGhost(null);
+            refresh();
+        });
+        list.add(powerSwitch);
         list.add(Box.createVerticalStrut(10));
         list.add(new SectionLabel("Machines"));
 
@@ -222,7 +263,9 @@ public final class Game implements BoardPanel.Handler {
                 if (!engine.unlocked(m)) return;
                 selected = selected == m ? null : m;
                 demolishing = false;
+                toggling = false;
                 boardPanel.setDemolishing(false);
+                boardPanel.setToggling(false);
                 boardPanel.setGhost(selected);
                 refresh();
             });
@@ -235,10 +278,16 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the RESEARCH tab: one {@link ItemRow} per {@link Tech}, in declaration order.
+     * Builds the RESEARCH tab: one {@link ItemRow} per {@link Tech}, in declaration order,
+     * split into {@link #unfinishedTechs} above and {@link #finishedTechs} below a {@link
+     * #finishedLabel} divider — so completed research reads as a receipt at the bottom of the
+     * list rather than staying mixed in with what's still buyable.
      *
      * <p>Same functional-callback-style wiring as {@link #buildTab()}: each row gets a fresh
-     * anonymous {@link ItemRow.Model} closing over the loop variable {@code t} and {@code engine}.
+     * anonymous {@link ItemRow.Model} closing over the loop variable {@code t} and {@code
+     * engine}. Each row is wrapped in a small bordered panel purely to carry its own bottom
+     * margin — see the wrapping comment below for why that, rather than the usual trailing
+     * {@link Box#createVerticalStrut}, is what gets used here.
      *
      * @return the scrollable RESEARCH tab body
      */
@@ -248,6 +297,17 @@ public final class Game implements BoardPanel.Handler {
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
         list.add(new SectionLabel("Research"));
+
+        unfinishedTechs.setOpaque(false);
+        unfinishedTechs.setLayout(new BoxLayout(unfinishedTechs, BoxLayout.Y_AXIS));
+        list.add(unfinishedTechs);
+
+        finishedLabel.setVisible(false);
+        list.add(finishedLabel);
+        finishedTechs.setOpaque(false);
+        finishedTechs.setLayout(new BoxLayout(finishedTechs, BoxLayout.Y_AXIS));
+        list.add(finishedTechs);
+
         for (Tech t : Tech.values()) {
             var row = new ItemRow(new ItemRow.Model() {
                 public String title() { return t.label; }
@@ -269,9 +329,17 @@ public final class Game implements BoardPanel.Handler {
                 }
             });
             techRows.put(t, row);
-            list.add(row);
-            list.add(Box.createVerticalStrut(5));
+            // A row moves whole between unfinishedTechs and finishedTechs in refresh(), so its
+            // spacing has to travel with it; a separate trailing Box.createVerticalStrut (as
+            // buildTab() uses) would get left behind in the old panel instead. Wrapping the row
+            // in its own bordered panel keeps the row and its margin as one movable unit.
+            var wrap = new JPanel(new BorderLayout());
+            wrap.setOpaque(false);
+            wrap.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
+            wrap.add(row, BorderLayout.CENTER);
+            (engine.board.has(t) ? finishedTechs : unfinishedTechs).add(wrap);
         }
+        finishedLabel.setVisible(finishedTechs.getComponentCount() > 0);
         list.add(Box.createVerticalGlue());
         return Ui.scroll(list);
     }
@@ -315,9 +383,10 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Re-syncs all UI surfaces with current engine state: updates the hint text, shows/hides
-     * build rows whose unlock state changed, and repaints the ledger, tab cards and manual.
-     * Called after every player action and on a timer from {@link #start()}; cheap enough to
-     * call liberally since it does no layout work unless visibility actually changed.
+     * build rows whose unlock state changed, moves any newly-completed research row down into
+     * {@link #finishedTechs}, and repaints the ledger, tab cards and manual. Called after every
+     * player action and on a timer from {@link #start()}; cheap enough to call liberally since
+     * it does no layout work unless something actually changed.
      */
     public void refresh() {
         String next = hintText();
@@ -335,6 +404,27 @@ public final class Game implements BoardPanel.Handler {
                 row.getParent().revalidate();
             }
         }
+        // Research only ever finishes, never un-finishes, so a row is moved at most once: the
+        // moment engine.board.has(t) first turns true, its wrapper panel (see techTab()) is
+        // relocated from unfinishedTechs to the end of finishedTechs, carrying its own spacing
+        // with it. Rows already in finishedTechs are skipped by the parent check below.
+        boolean movedAny = false;
+        for (Tech t : Tech.values()) {
+            ItemRow row = techRows.get(t);
+            if (row == null || !engine.board.has(t)) continue;
+            var wrap = row.getParent();
+            if (wrap != null && wrap.getParent() == unfinishedTechs) {
+                unfinishedTechs.remove(wrap);
+                finishedTechs.add(wrap);
+                movedAny = true;
+            }
+        }
+        if (movedAny) {
+            finishedLabel.setVisible(true);
+            unfinishedTechs.revalidate();
+            finishedTechs.revalidate();
+            finishedLabel.revalidate();
+        }
         ledger.revalidate();
         ledger.repaint();
         cards.repaint();
@@ -346,13 +436,14 @@ public final class Game implements BoardPanel.Handler {
      *
      * <p>This does not construct a new {@link Game}/{@link Engine} and swap it into the UI.
      * Instead it builds a throwaway {@link Engine#fresh()}, copies its board arrays ({@code
-     * cell}, {@code ore}, {@code rich}) byte-for-byte onto the <em>live</em> board's arrays via
-     * {@link System#arraycopy}, and then manually resets every other mutable board field one by
-     * one (resources, seen-set, built/tech sets, claim size, energy, click count, log). This is a
-     * manual "reset in place": {@code engine}, {@code boardPanel}, {@code ledger} and every row's
-     * closures are all bound to the original {@link Engine} instance, so replacing that instance
-     * would mean re-wiring every listener and closure built during {@link #root()}. Mutating the
-     * existing engine's board arrays in place avoids that entirely.
+     * cell}, {@code ore}, {@code rich}, {@code off}) byte-for-byte onto the <em>live</em>
+     * board's arrays via {@link System#arraycopy}, and then manually resets every other mutable
+     * board field one by one (resources, seen-set, built/tech sets, claim size, energy, click
+     * count, log). This is a manual "reset in place": {@code engine}, {@code boardPanel},
+     * {@code ledger} and every row's closures are all bound to the original {@link Engine}
+     * instance, so replacing that instance would mean re-wiring every listener and closure
+     * built during {@link #root()}. Mutating the existing engine's board arrays in place avoids
+     * that entirely.
      */
     private void abandon() {
         int answer = JOptionPane.showConfirmDialog(boardPanel,
@@ -364,6 +455,7 @@ public final class Game implements BoardPanel.Handler {
         System.arraycopy(fresh.board.cell, 0, engine.board.cell, 0, fresh.board.cell.length);
         System.arraycopy(fresh.board.ore, 0, engine.board.ore, 0, fresh.board.ore.length);
         System.arraycopy(fresh.board.rich, 0, engine.board.rich, 0, fresh.board.rich.length);
+        System.arraycopy(fresh.board.off, 0, engine.board.off, 0, fresh.board.off.length);
         engine.board.res.replaceAll((r, v) -> 0.0);
         engine.board.seen.clear();
         engine.board.seen.put(Res.MATTER, true);
@@ -375,8 +467,25 @@ public final class Game implements BoardPanel.Handler {
         engine.board.log.clear();
         selected = null;
         demolishing = false;
+        toggling = false;
         boardPanel.setGhost(null);
         boardPanel.setDemolishing(false);
+        boardPanel.setToggling(false);
+        // Undoes refresh()'s one-way move into finishedTechs: abandoning wipes board.tech, so
+        // every tech is unresearched again. refresh() only ever moves a row forward, so this
+        // rebuilds both panels from scratch in declaration order rather than moving rows back
+        // one at a time — a piecemeal move-back would append each recovered row at the end of
+        // unfinishedTechs instead of restoring its original position among the rows that were
+        // never touched, silently scrambling the list order.
+        unfinishedTechs.removeAll();
+        finishedTechs.removeAll();
+        for (Tech t : Tech.values()) {
+            ItemRow row = techRows.get(t);
+            if (row != null) unfinishedTechs.add(row.getParent());
+        }
+        finishedLabel.setVisible(false);
+        unfinishedTechs.revalidate();
+        finishedTechs.revalidate();
         engine.markDirty();
         engine.recompute();
         refresh();
@@ -384,8 +493,8 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear selection, D =
-     * toggle dismantle) onto {@code root}'s input/action maps, active whenever the containing
-     * window has focus, regardless of which child component has it.
+     * toggle dismantle, P = toggle power switch) onto {@code root}'s input/action maps, active
+     * whenever the containing window has focus, regardless of which child component has it.
      *
      * @param root the component whose input map the shortcuts are registered on
      */
@@ -401,8 +510,10 @@ public final class Game implements BoardPanel.Handler {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) {
                 selected = null;
                 demolishing = false;
+                toggling = false;
                 boardPanel.setGhost(null);
                 boardPanel.setDemolishing(false);
+                boardPanel.setToggling(false);
                 refresh();
             }
         });
@@ -411,8 +522,22 @@ public final class Game implements BoardPanel.Handler {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) {
                 demolishing = !demolishing;
                 selected = null;
+                toggling = false;
                 boardPanel.setGhost(null);
+                boardPanel.setToggling(false);
                 boardPanel.setDemolishing(demolishing);
+                refresh();
+            }
+        });
+        im.put(KeyStroke.getKeyStroke("P"), "power");
+        am.put("power", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                toggling = !toggling;
+                selected = null;
+                demolishing = false;
+                boardPanel.setGhost(null);
+                boardPanel.setDemolishing(false);
+                boardPanel.setToggling(toggling);
                 refresh();
             }
         });
@@ -431,8 +556,9 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * {@link BoardPanel.Handler} callback for a left click/drag-through on a cell. Dispatches by
-     * current mode: dismantle mode demolishes the clicked block (except the core), otherwise
-     * clicking the core taps it, and clicking with a machine selected attempts placement.
+     * current mode: dismantle mode demolishes the clicked block, power-switch mode flips it on
+     * or off (neither applies to the core), otherwise clicking the core taps it, and clicking
+     * with a machine selected attempts placement.
      *
      * @param x     cell column
      * @param y     cell row
@@ -442,6 +568,13 @@ public final class Game implements BoardPanel.Handler {
         if (demolishing) {
             if (group != null && group.type != Machine.CORE) {
                 engine.demolish(group);
+                refresh();
+            }
+            return;
+        }
+        if (toggling) {
+            if (group != null && group.type != Machine.CORE) {
+                engine.toggle(group, !group.enabled);
                 refresh();
             }
             return;
@@ -492,7 +625,11 @@ public final class Game implements BoardPanel.Handler {
         }
         if (g.mult > 1.0001) out.add(Ui.Seg.of("  overclock +" + Fmt.pct(g.mult - 1), Theme.AMBER));
         if (g.ore != null) out.add(Ui.Seg.of("  " + g.ore.lower() + " richness " + String.format("%.2f", g.richness), Theme.DIM));
-        if (!g.powered) {
+        // g.powered already folds g.enabled in (see Group#powered), so !g.enabled is checked
+        // first to give the player the accurate reason rather than always blaming the link.
+        if (!g.enabled) {
+            out.add(Ui.Seg.of("  switched off", Theme.AMBER));
+        } else if (!g.powered) {
             out.add(Ui.Seg.of("  not linked to the core - no power", Theme.HOT));
         } else if (g.rate < 0.999) {
             out.add(Ui.Seg.of("  running at " + Fmt.pct(g.rate), Theme.HOT));
@@ -648,13 +785,14 @@ public final class Game implements BoardPanel.Handler {
 
         /**
          * @param label   tab name, shown centered and uppercase-styled via the theme font
-         * @param onClick invoked on mouse click, regardless of button or modifiers
+         * @param onClick invoked on mouse press, regardless of button or modifiers
          */
         TabButton(String label, Runnable onClick) {
             this.label = label;
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new java.awt.event.MouseAdapter() {
-                @Override public void mouseClicked(java.awt.event.MouseEvent e) { onClick.run(); }
+                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                @Override public void mousePressed(java.awt.event.MouseEvent e) { onClick.run(); }
             });
         }
 

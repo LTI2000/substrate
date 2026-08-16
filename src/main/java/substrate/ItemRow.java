@@ -44,9 +44,13 @@ public final class ItemRow extends JComponent {
         setOpaque(false);
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         addMouseListener(new MouseAdapter() {
-            @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
-            @Override public void mouseExited(MouseEvent e)  { hover = false; repaint(); }
-            @Override public void mouseClicked(MouseEvent e) { onClick.run(); }
+            @Override public void mouseEntered(MouseEvent e)  { hover = true; repaint(); }
+            @Override public void mouseExited(MouseEvent e)   { hover = false; repaint(); }
+            // mousePressed, not mouseClicked: MOUSE_CLICKED is only synthesized when the
+            // pointer doesn't move at all between press and release, so any tiny jitter
+            // (trackpads, imprecise mice) silently drops the click. Acting on press directly
+            // is the same fix BoardPanel already uses for board taps/placement.
+            @Override public void mousePressed(MouseEvent e)  { onClick.run(); }
         });
     }
 

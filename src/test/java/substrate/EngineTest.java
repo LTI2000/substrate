@@ -159,6 +159,72 @@ class EngineTest {
     }
 
     /**
+     * Checks the whole power-switch lifecycle on a fused block: switching it off drops it to
+     * zero output and shrinks site demand, it reads as unpowered (but still {@code enabled}
+     * stays observably {@code false}) even though it's still linked, and switching it back on
+     * resumes production without needing to demolish and rebuild it.
+     */
+    @Test
+    @DisplayName("a manually switched-off group draws and produces nothing until switched back on")
+    void powerSwitchStopsAndResumesAGroup() {
+        var e = smelterSite();
+        var b = e.board;
+        run(e, 0.1);                                           // one tick, so power() has a real demand baseline
+        double demandBefore = e.power().demand();
+
+        e.toggle(e.layout().at(8, 7), false);                  // the 2x2 furnace block
+        e.recompute();
+        Group off = e.layout().at(8, 7);
+        assertFalse(off.enabled, "manually switched off");
+        assertFalse(off.powered, "an off group reads as unpowered even though still linked");
+
+        zero(b);
+        run(e, 5);
+        assertEquals(0.0, b.get(Res.IRON), 1e-9, "a switched-off furnace makes nothing");
+        assertTrue(e.power().demand() < demandBefore, "and stops drawing its share of power");
+
+        e.toggle(off, true);
+        e.recompute();
+        assertTrue(e.layout().at(8, 7).enabled);
+        assertTrue(e.layout().at(8, 7).powered, "switched back on and still linked");
+        b.set(Res.IRON_ORE, 1e6);                              // zero(b) above also drained the furnace's feedstock
+        b.set(Res.COAL, 1e6);
+        run(e, 10);
+        assertTrue(b.get(Res.IRON) > 0, "resumes producing once back on");
+    }
+
+    /** Checks that {@link Engine#toggle} silently ignores the core, which can never be switched off. */
+    @Test
+    @DisplayName("the core can't be switched off")
+    void coreCannotBeToggled() {
+        var e = smelterSite();
+        e.toggle(e.layout().at(Board.CX, Board.CY), false);
+        e.recompute();
+        Group core = e.layout().at(Board.CX, Board.CY);
+        assertTrue(core.enabled);
+        assertTrue(core.powered);
+    }
+
+    /**
+     * Checks that a manual switch-off is tracked per cell on the board, not on the block that
+     * happened to occupy it: demolishing a switched-off block and rebuilding on the same cells
+     * starts fresh, powered on, rather than inheriting the old off state.
+     */
+    @Test
+    @DisplayName("demolishing and rebuilding on the same cell clears any manual switch-off")
+    void demolishAndRebuildClearsManualOff() {
+        var e = TestSite.blank();
+        e.board.claim = 15;
+        build(e, Machine.PYLON, 7, 6, 1, 1);
+        e.toggle(e.layout().at(7, 6), false);
+        e.recompute();
+        e.demolish(e.layout().at(7, 6));
+        build(e, Machine.PYLON, 7, 6, 1, 1);
+        e.recompute();
+        assertTrue(e.layout().at(7, 6).enabled, "a fresh build on a previously-switched-off cell starts enabled");
+    }
+
+    /**
      * Checks that an underpowered site (demand exceeding supply) scales every machine's
      * throughput by the same satisfaction fraction, that a machine with no path to the core
      * stays unpowered, and that resource values remain finite throughout — no NaN or infinity

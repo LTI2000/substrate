@@ -150,24 +150,35 @@ public final class Fusion {
 
     /**
      * Builds a {@link Group} for rectangle {@code r}, registers its cells in
-     * {@code cellGroup}, and averages the ore richness of any ore-bearing cells it covers
-     * (defaulting to 1 when the group covers no ore, e.g. non-mining machines).
+     * {@code cellGroup}, averages the ore richness of any ore-bearing cells it covers
+     * (defaulting to 1 when the group covers no ore, e.g. non-mining machines), and derives
+     * {@link Group#enabled} from {@link Board#off}.
+     *
+     * <p>{@code enabled} is {@code false} if <em>any</em> cell in the rectangle is manually
+     * switched off, not only if every cell is. {@link Engine#toggle} always flips every cell
+     * of a group at once, so in the common case the cells agree; the only way they could
+     * disagree is a fresh placement fusing a switched-off block together with an adjacent
+     * switched-on one before the player re-toggles the merged result, and erring toward "off"
+     * there is the safer default — it never silently reactivates something the player turned
+     * off.
      */
     private static Group make(Board b, int[] cellGroup, int id, Machine type, Rect r) {
         int[] cells = new int[r.w() * r.h()];
         int n = 0, richSum = 0;
         Res ore = null;
+        boolean enabled = true;
         for (int dy = 0; dy < r.h(); dy++) {
             for (int dx = 0; dx < r.w(); dx++) {
                 int i = Board.idx(r.x() + dx, r.y() + dy);
                 cells[n++] = i;
                 cellGroup[i] = id;
                 if (b.ore[i] != null) { ore = b.ore[i]; richSum += b.rich[i]; }
+                if (b.off[i]) enabled = false;
             }
         }
         double rich = n > 0 ? (double) richSum / n : 1;
         if (rich <= 0) rich = 1;
-        return new Group(id, type, r.x(), r.y(), r.w(), r.h(), cells, ore, rich);
+        return new Group(id, type, r.x(), r.y(), r.w(), r.h(), cells, ore, rich, enabled);
     }
 
     /**
@@ -196,10 +207,16 @@ public final class Fusion {
             if (y > 0)           step(b, linked, stack, i - Board.W);
             if (y < Board.H - 1) step(b, linked, stack, i + Board.W);
         }
+        // Reachability alone does not need a group to be switched on: a manually disabled
+        // machine still occupies its cells, so it still conducts the flood fill through to
+        // whatever fuses or wires past it, exactly as an unpowered-but-linked machine already
+        // did before Group#enabled existed. Only g.powered — what tick() and the renderer act
+        // on — folds enabled in, so a disabled group reads as unpowered everywhere else in the
+        // codebase without every caller needing to check both flags separately.
         for (Group g : layout.groups()) {
             boolean on = false;
             for (int i : g.cells) on |= linked[i];
-            g.powered = on;
+            g.powered = on && g.enabled;
         }
         return linked;
     }

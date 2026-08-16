@@ -97,7 +97,11 @@ public final class Art {
         }
 
         if (grp.fused()) seams(g, grp, x, y, w, h, u);
-        if (!grp.powered && grp.type != Machine.CORE) dead(g, x, y, w, h, u);
+        // Both an unpowered and a manually-switched-off group read as !grp.powered (see
+        // Group#powered), but they mean different things to the player, so dead()'s tint is
+        // colored by which one it is: HOT (alert red) for "something's wrong, this isn't
+        // linked", AMBER (attention, not alarm) for "this is off because you turned it off".
+        if (!grp.powered && grp.type != Machine.CORE) dead(g, x, y, w, h, u, grp.enabled ? Theme.HOT : Theme.AMBER);
         if (hover) {
             g.setColor(Theme.CHALK);
             g.setStroke(new BasicStroke((float) Math.max(1, u)));
@@ -285,21 +289,25 @@ public final class Art {
      * (clipped to the plate so the stripes don't spill past its corners), a hazard-colored
      * outline, and a lit warning LED &mdash; so a stalled machine reads as visibly dead rather
      * than merely un-animated.
+     *
+     * @param accent {@link Theme#HOT} for "not linked to the core" (an actual problem) or
+     *               {@link Theme#AMBER} for "manually switched off" (a deliberate choice); see
+     *               the call in {@link #paint} for which is which.
      */
-    private static void dead(Graphics2D g, double x, double y, double w, double h, double u) {
+    private static void dead(Graphics2D g, double x, double y, double w, double h, double u, Color accent) {
         var clip = g.getClip();
         g.clip(new Rectangle2D.Double(x, y, w, h));
         g.setColor(new Color(12, 20, 30, 62));
         g.fill(new Rectangle2D.Double(x, y, w, h));
-        g.setColor(Theme.alpha(Theme.HOT, 26));
+        g.setColor(Theme.alpha(accent, 26));
         g.setStroke(new BasicStroke((float) Math.max(1.5, 2.2 * u)));
         for (double d = -h; d < w + h; d += 8 * u)
             g.draw(new Line2D.Double(x + d, y + h, x + d + h, y));
         g.setClip(clip);
-        g.setColor(Theme.alpha(Theme.HOT, 150));
+        g.setColor(Theme.alpha(accent, 150));
         g.setStroke(new BasicStroke((float) Math.max(1, u)));
         g.draw(new Rectangle2D.Double(x, y, w - 1, h - 1));
-        led(g, x + w - 3.5 * u, y + 3.5 * u, Math.max(1, 1.3 * u), Theme.HOT, 0.85);
+        led(g, x + w - 3.5 * u, y + 3.5 * u, Math.max(1, 1.3 * u), accent, 0.85);
     }
     /**
      * Fractional part of {@code v}, always landing in {@code [0, 1)} even for negative input

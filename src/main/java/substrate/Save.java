@@ -12,8 +12,11 @@ import java.nio.file.*;
  * are encoded as a single line of {@code ,}-separated entries, with {@code :} separating
  * the key and value inside each entry (e.g. {@code res=MATTER:12.0,IRON:4.0,}). The board
  * itself is serialized as one flat comma-joined list of enum names, one per cell, with
- * {@code -} standing in for an empty cell. This keeps the save human-readable and
- * dependency-free at the cost of any real schema or type safety.
+ * {@code -} standing in for an empty cell. Manually switched-off cells ({@link Board#off})
+ * are the one exception to the per-cell-list pattern: since only a handful are ever set,
+ * {@code off} is a sparse comma-joined list of flat cell indices rather than another
+ * 225-entry positional list. This keeps the save human-readable and dependency-free at the
+ * cost of any real schema or type safety.
  *
  * <p>Reading is deliberately forgiving rather than strict: every field falls back to a
  * hardcoded default via {@code getOrDefault} if missing, and the whole of {@link #read()}
@@ -54,6 +57,8 @@ public final class Save {
         sb.append("\nore=");
         for (int i = 0; i < b.ore.length; i++)
             sb.append(b.ore[i] == null ? "-" : b.ore[i].name() + ":" + b.rich[i]).append(',');
+        sb.append("\noff=");
+        for (int i = 0; i < b.off.length; i++) if (b.off[i]) sb.append(i).append(',');
         sb.append('\n');
         try {
             Files.createDirectories(file().getParent());
@@ -105,6 +110,10 @@ public final class Save {
                 var kv = ore[i].split(":");
                 b.ore[i] = Res.valueOf(kv[0]);
                 b.rich[i] = Integer.parseInt(kv[1]);
+            }
+            for (String s : split(fields.get("off"))) {
+                int i = Integer.parseInt(s);
+                if (i >= 0 && i < b.off.length) b.off[i] = true;
             }
             b.cell[Board.idx(Board.CX, Board.CY)] = Machine.CORE;
             return b;

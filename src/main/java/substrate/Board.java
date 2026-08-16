@@ -20,6 +20,15 @@ public final class Board {
     public final Res[] ore = new Res[W * H];
     /** Richness of the ore under each cell (meaningless where {@link #ore} is {@code null}). */
     public final int[] rich = new int[W * H];
+    /**
+     * Whether each cell has been manually switched off by the player, via {@link Engine#toggle}.
+     * Tracked per-cell here rather than as a flag on {@link Group} because groups are rebuilt
+     * from scratch on every {@link Engine#recompute()} (see {@link Fusion#layout}) — anything
+     * living only on a {@link Group} would evaporate the instant an unrelated board edit
+     * triggered a rebuild. This array is the durable source of truth a fresh group reads from
+     * at construction time, the same way it reads {@link #ore}/{@link #rich}.
+     */
+    public final boolean[] off = new boolean[W * H];
 
     /** Current stock of every resource. */
     public final EnumMap<Res, Double> res = new EnumMap<>(Res.class);

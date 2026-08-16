@@ -57,6 +57,8 @@ public final class BoardPanel extends JComponent {
     private Machine ghost;
     /** Whether the demolish tool is active, previewing the fused block under the cursor for removal. */
     private boolean demolishing;
+    /** Whether the power-switch tool is active, previewing the fused block under the cursor for toggling. */
+    private boolean toggling;
     /** Board cell currently under the mouse, or {@code -1, -1} when the pointer is outside the grid. */
     private int hoverX = -1, hoverY = -1;
     /** {@link #clock()} time the last core ripple started; far in the past so no ripple shows initially. */
@@ -85,6 +87,8 @@ public final class BoardPanel extends JComponent {
     public void setGhost(Machine m)            { ghost = m; repaint(); }
     /** Toggles the demolish-tool preview. Triggers a repaint. */
     public void setDemolishing(boolean on)     { demolishing = on; repaint(); }
+    /** Toggles the power-switch-tool preview. Triggers a repaint. */
+    public void setToggling(boolean on)        { toggling = on; repaint(); }
     /** Seconds elapsed since this panel was constructed; the shared clock every animation is timed against. */
     public double clock()                      { return (System.nanoTime() - start) / 1e9; }
 
@@ -333,9 +337,10 @@ public final class BoardPanel extends JComponent {
 
     /**
      * Draws whatever the cursor is currently doing to the hovered cell: in demolish mode, an
-     * outline around the fused block that would be removed; otherwise, a tinted square
-     * previewing placement of {@link #ghost}, colored amber if legal (empty, claimed,
-     * ore-compatible, affordable) or hot/red if not.
+     * outline around the fused block that would be removed; in power-switch mode, an outline
+     * around the fused block that would be toggled, colored by which way the click would flip
+     * it; otherwise, a tinted square previewing placement of {@link #ghost}, colored amber if
+     * legal (empty, claimed, ore-compatible, affordable) or hot/red if not.
      */
     private void ghostPreview(Graphics2D g, double ox, double oy, double cs) {
         if (hoverX < 0 || hoverY < 0) return;
@@ -346,6 +351,17 @@ public final class BoardPanel extends JComponent {
             Group grp = engine.layout().at(hoverX, hoverY);
             if (grp != null && grp.type != Machine.CORE) {
                 g.setColor(Theme.alpha(Theme.HOT, 150));
+                g.setStroke(new BasicStroke(1.6f));
+                g.draw(new Rectangle2D.Double(ox + grp.x * cs + 1, oy + grp.y * cs + 1, grp.w * cs - 2, grp.h * cs - 2));
+            }
+            return;
+        }
+        if (toggling) {
+            Group grp = engine.layout().at(hoverX, hoverY);
+            if (grp != null && grp.type != Machine.CORE) {
+                // Amber previews "this click switches it off", good/green previews "this click
+                // switches it back on" — the same colour convention as Art's dead() overlay.
+                g.setColor(Theme.alpha(grp.enabled ? Theme.AMBER : Theme.GOOD, 170));
                 g.setStroke(new BasicStroke(1.6f));
                 g.draw(new Rectangle2D.Double(ox + grp.x * cs + 1, oy + grp.y * cs + 1, grp.w * cs - 2, grp.h * cs - 2));
             }

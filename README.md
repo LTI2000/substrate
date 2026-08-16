@@ -37,6 +37,9 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 - Build from the panel on the right; click a placed machine to dismantle the whole fused block, at half refund.
 - Machines only run if they are connected to the core through a chain of touching machines. Pylons
   are the cheap way to reach a distant ore patch.
+- Power Switch (or press P) toggles a whole fused block off — it stops drawing power and producing
+  but stays built, so you can free up power for something else without paying to demolish and rebuild.
+  An off block still conducts power through to whatever is fused or wired past it.
 - Amber dashes mark the edge of your claim. Research widens it.
 - Hover anything for readings. The MANUAL tab explains the rest.
 
