@@ -1067,7 +1067,7 @@ public final class Game implements BoardPanel.Handler {
         double rad = Math.min(r.getWidth(), r.getHeight()) * 0.4;
         g.setColor(Theme.alpha(Theme.CHALK, 210));
         g.setStroke(new BasicStroke((float) (rad * 0.34), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(new Arc2D.Double(cx - rad, cy - rad, rad * 2, rad * 2, 55, 250, Arc2D.OPEN));
+        g.draw(new Arc2D.Double(cx - rad, cy - rad, rad * 2, rad * 2, 145, 250, Arc2D.OPEN));
         g.draw(new Line2D.Double(cx, cy - rad * 1.3, cx, cy - rad * 0.1));
     }
 
