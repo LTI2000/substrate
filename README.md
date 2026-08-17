@@ -46,6 +46,11 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 - Hover anything for readings. The MANUAL tab explains the rest.
 - Victory: build a Fusion Reactor, the machine at the top of the research tree. The site marks
   it permanently in the masthead; nothing stops, so play on as long as you like afterward.
+- Collapse: once you've won, COLLAPSE consumes every machine on the board and refuses them
+  into a single Monolith across the northern half of your claim - the same fusion rule as any
+  other block, applied to the whole site at once. Resources, research and the claim survive;
+  the southern half stays free to build on, and collapsing again later folds a bigger claim
+  into an even bigger Monolith.
 
 ## Layout
 

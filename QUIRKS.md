@@ -145,6 +145,18 @@ an oversight.
   (`src/main/java/substrate/Board.java` (`off`), `src/main/java/substrate/Fusion.java` (`make`, `energise`),
   `src/main/java/substrate/Engine.java` (`toggle`))
 
+- **The victory-reward machine gets no bespoke scaling formula — it just
+  reuses the fusion rule it's standing on.** `Engine.collapse()` clears the
+  whole board and fills one rectangle solid with `Machine.MONOLITH`. Since
+  that's one machine kind filling one rectangle, `Fusion.layout` fuses it
+  into a single `Group` exactly the way it would any other same-kind block,
+  and the Monolith's output scales by `area^exponent` for free — no special
+  "how big should the reward be" code anywhere. A bigger claim (more Claim
+  Extension research) or a higher fusion exponent (`GEO1`/`GEO2`) both just
+  make the one rectangle-fusion mechanic the whole game already runs on
+  produce a bigger number, the same as it would for a mining rig.
+  (`src/main/java/substrate/Engine.java` (`collapse`))
+
 ## Persistence
 
 - **Hand-rolled key=value save format**, no JSON, no schema — nested

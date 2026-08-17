@@ -47,6 +47,7 @@ public final class Save {
         sb.append("clicks=").append(b.clicks).append('\n');
         sb.append("saved=").append(b.savedAt).append('\n');
         sb.append("won=").append(b.won).append('\n');
+        sb.append("collapsed=").append(b.collapsed).append('\n');
         sb.append("res=");
         b.res.forEach((r, v) -> sb.append(r.name()).append(':').append(v).append(','));
         sb.append("\ntech=");
@@ -93,6 +94,7 @@ public final class Save {
             b.clicks = Long.parseLong(fields.getOrDefault("clicks", "0"));
             b.savedAt = Long.parseLong(fields.getOrDefault("saved", String.valueOf(System.currentTimeMillis())));
             b.won = Boolean.parseBoolean(fields.getOrDefault("won", "false"));
+            b.collapsed = Boolean.parseBoolean(fields.getOrDefault("collapsed", "false"));
             for (var pair : split(fields.get("res"))) {
                 var kv = pair.split(":");
                 b.set(Res.valueOf(kv[0]), Double.parseDouble(kv[1]));

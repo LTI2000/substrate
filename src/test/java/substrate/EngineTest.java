@@ -249,6 +249,60 @@ class EngineTest {
     }
 
     /**
+     * Checks that {@link Engine#collapse()} requires {@link Board#won} first — collapsing a
+     * site that hasn't reached victory would just demolish everything for nothing, so it's a
+     * no-op (returns {@code false}, {@link Board#collapsed} stays {@code false}) rather than
+     * something a stray click could trigger by mistake.
+     */
+    @Test
+    @DisplayName("collapse does nothing before victory")
+    void collapseRequiresVictory() {
+        var e = TestSite.blank();
+        build(e, Machine.PYLON, 7, 6, 1, 1);
+        assertFalse(e.collapse(), "no victory yet");
+        assertFalse(e.board.collapsed);
+        assertEquals(Machine.PYLON, e.board.cell[Board.idx(7, 6)], "nothing was touched");
+    }
+
+    /**
+     * Checks the payoff of {@link Engine#collapse()}: once won, every standing machine except
+     * the core is consumed, and the claim's northern half — every row strictly above the core's
+     * fixed row, at the claim's full width — is filled solid with {@link Machine#MONOLITH},
+     * which fuses into exactly one {@link Group} the same way any other same-kind rectangle
+     * would, touching (and so immediately powered by) the core. Also checks it's repeatable:
+     * collapsing again with nothing changed still succeeds and leaves the same block in place.
+     */
+    @Test
+    @DisplayName("collapse fuses the whole site into one Monolith, touching the core")
+    void collapseFusesEverythingIntoOneMonolith() {
+        var e = TestSite.blank();
+        var b = e.board;
+        b.claim = 15;
+        build(e, Machine.TOKAMAK, 7, 5, 1, 1);          // wins
+        build(e, Machine.PYLON, 3, 3, 1, 1);
+        build(e, Machine.SOLAR, 4, 4, 1, 1);
+        assertTrue(b.won);
+
+        assertTrue(e.collapse());
+        assertTrue(b.collapsed);
+
+        int margin = b.margin();                        // 0, since claim is the full 15x15
+        int width = b.claim;                             // 15
+        int height = Board.CY - margin;                  // 7 rows strictly above the core
+        Group monolith = e.layout().at(margin, margin);
+        assertEquals(Machine.MONOLITH, monolith.type);
+        assertEquals(width, monolith.w);
+        assertEquals(height, monolith.h);
+        assertTrue(monolith.powered, "touches the core's row directly, so it's linked immediately");
+        assertEquals(width * height, b.count(Machine.MONOLITH));
+        assertEquals(0, b.count(Machine.PYLON), "every other machine was consumed");
+        assertEquals(0, b.count(Machine.SOLAR));
+        assertEquals(Machine.CORE, b.cell[Board.idx(Board.CX, Board.CY)], "the core survives its own collapse");
+
+        assertTrue(e.collapse(), "collapsing again (e.g. after a further claim extension) just re-collapses cleanly");
+    }
+
+    /**
      * Checks that an underpowered site (demand exceeding supply) scales every machine's
      * throughput by the same satisfaction fraction, that a machine with no path to the core
      * stays unpowered, and that resource values remain finite throughout — no NaN or infinity

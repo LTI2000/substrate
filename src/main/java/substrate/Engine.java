@@ -51,6 +51,11 @@ import java.util.Random;
  * Board#won} the moment the player's first {@link Machine#TOKAMAK} goes down and never clears
  * it, even if that reactor is later dismantled — it records that the site once reached the top
  * of the tech tree, not that a reactor currently stands.
+ *
+ * <p><b>Collapsing the site reuses the fusion rule instead of inventing a new one.</b> {@link
+ * #collapse()} fills a rectangle with {@link Machine#MONOLITH} and lets {@link Fusion#layout}
+ * fuse it exactly like it would any other same-kind rectangle — the Monolith's payoff scales
+ * with {@code area^exponent} for free, no bespoke "how big a reward" formula needed.
  */
 public final class Engine {
 
@@ -427,6 +432,55 @@ public final class Engine {
         if (g == null || g.type == Machine.CORE) return;
         for (int i : g.cells) board.off[i] = !on;
         dirty = true;
+    }
+
+    /**
+     * The site's final act of fusion, available once {@link Board#won}: every standing machine
+     * is cleared and the claim's northern half is filled solid with {@link Machine#MONOLITH},
+     * which — being one machine kind filling one rectangle — {@link Fusion#layout} fuses into a
+     * single {@link Group} the same way any other rectangle of identical machines would, with no
+     * special-casing anywhere else in the renderer or the tick loop. Its area is {@code claim} by
+     * however many rows sit strictly above the core's fixed row, so it's always at least 7x3 (the
+     * smallest possible claim) and always touches the core directly, powering up immediately.
+     *
+     * <p>The Monolith's own {@link Role.Producer} rate is a small, fixed-per-cell constant (see
+     * {@link Machine#MONOLITH}) — deliberately unremarkable on its own. What makes the payoff
+     * feel earned is the exact same {@code area}<sup>{@code exponent}</sup> rule every other
+     * fused block already obeys: a bigger claim (i.e. more Claim Extension research completed
+     * before collapsing) yields a bigger Monolith, and the fusion exponent research
+     * ({@link Tech#GEO1}/{@link Tech#GEO2}) that made every earlier block hit harder makes this
+     * one hit harder too. No new scaling mechanic was needed; the existing one already rewards
+     * "how far did you get" exactly the way this capstone should.
+     *
+     * <p>Resources, tech, and the claim itself are untouched — only what stands on the ground
+     * changes, and the southern half of the claim is left buildable, so collapsing is a
+     * transformation to build forward from, not an ending. It's also repeatable: nothing stops
+     * the player researching another Claim Extension, rebuilding in the southern half, and
+     * collapsing again to fold a bigger claim (and whatever got rebuilt) into an even larger
+     * Monolith. {@link Board#collapsed} just latches once, the same one-way way {@link
+     * Board#won} does, purely so the UI has something permanent to show for it.
+     *
+     * @return whether the collapse happened ({@code false} if the site hasn't won yet)
+     */
+    public boolean collapse() {
+        if (!board.won) return false;
+        for (int i = 0; i < board.cell.length; i++) {
+            if (board.cell[i] == Machine.CORE) continue;
+            board.cell[i] = null;
+            board.off[i] = false;
+        }
+        board.built.clear();
+        int margin = board.margin();
+        int width = board.claim;
+        int height = Board.CY - margin;            // rows strictly above the core's fixed row
+        for (int y = margin; y < margin + height; y++)
+            for (int x = margin; x < margin + width; x++)
+                board.cell[Board.idx(x, y)] = Machine.MONOLITH;
+        board.built.put(Machine.MONOLITH, width * height);
+        board.collapsed = true;
+        board.logLine("The site collapses into a single Monolith.");
+        dirty = true;
+        return true;
     }
 
     /** Manually condenses matter from the core: adds {@link #clickYield()} matter and counts the click. */

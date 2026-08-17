@@ -56,6 +56,14 @@ public final class Board {
      * records an achievement rather than current board state.
      */
     public boolean won;
+    /**
+     * Whether the site has ever been folded into a {@link Machine#MONOLITH} — see {@link
+     * Engine#collapse()}. Sticky like {@link #won}, and for the same reason: it's a record that
+     * the player once performed the collapse, not a live check of whether a Monolith currently
+     * stands (collapsing is repeatable, so a Monolith is in fact always standing after the
+     * first time, but this flag doesn't derive that — it's just simpler to set once and forget).
+     */
+    public boolean collapsed;
 
     /** Fresh board: every resource at zero, only Matter marked discovered, core placed at centre. */
     public Board() {

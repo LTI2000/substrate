@@ -174,24 +174,39 @@ public final class Game implements BoardPanel.Handler {
         };
         root.setPreferredSize(new Dimension(WIN_W, WIN_H));
 
-        var masthead = new Masthead();
-        masthead.setBounds(MARGIN_L, MARGIN_T, LEFT_W, HEADER_H);
-        root.add(masthead);
-
-        // SAVE/ABANDON are measured and placed right-to-left off the header row's right edge —
-        // a one-time getPreferredSize() probe, not a live layout dependency, since neither
-        // chip's text (and so its width) ever changes after construction.
+        // SAVE/COLLAPSE/ABANDON are measured and placed right-to-left off the header row's
+        // right edge first — a one-time getPreferredSize() probe, not a live layout dependency,
+        // since none of the three chips' text (and so their width) ever changes after
+        // construction — so that the masthead below can be given a width that stops safely
+        // short of them. COLLAPSE stays visible before victory rather than appearing/
+        // disappearing with it — simpler than reflowing SAVE/ABANDON's positions around a chip
+        // whose presence changes, and clicking it early just explains what's missing instead of
+        // doing nothing.
         var save = new Ui.Chip("SAVE", () -> {
             Save.write(engine.board);
             status.set(List.of(Ui.Seg.of("Site saved.", Theme.GOOD)));
         });
+        var collapseChip = new Ui.Chip("COLLAPSE", this::collapse);
         var abandonChip = new Ui.Chip("ABANDON SITE", this::abandon);
-        Dimension saveSize = save.getPreferredSize(), abandonSize = abandonChip.getPreferredSize();
+        Dimension saveSize = save.getPreferredSize(), collapseSize = collapseChip.getPreferredSize(),
+                abandonSize = abandonChip.getPreferredSize();
         int buttonY = MARGIN_T + (HEADER_H - abandonSize.height) / 2;
         int rightEdge = MARGIN_L + LEFT_W;
         abandonChip.setBounds(rightEdge - abandonSize.width, buttonY, abandonSize.width, abandonSize.height);
-        save.setBounds(abandonChip.getX() - 6 - saveSize.width, buttonY, saveSize.width, saveSize.height);
+        collapseChip.setBounds(abandonChip.getX() - 6 - collapseSize.width, buttonY, collapseSize.width, collapseSize.height);
+        save.setBounds(collapseChip.getX() - 6 - saveSize.width, buttonY, saveSize.width, saveSize.height);
+
+        // Masthead's own text can grow (the "· FUSION ONLINE" / "· MONOLITH" badges are
+        // appended live), and Ui.Chip paints no background of its own — see its Javadoc — so
+        // without this, long-enough masthead text would visibly bleed through behind the
+        // buttons instead of being covered by them. Stopping the masthead's own bounds safely
+        // short of the leftmost chip lets Swing's ordinary per-component clipping cut off
+        // anything that would have overflowed, with no manual clip code needed here.
+        var masthead = new Masthead();
+        masthead.setBounds(MARGIN_L, MARGIN_T, save.getX() - MARGIN_L - 10, HEADER_H);
+        root.add(masthead);
         root.add(save);
+        root.add(collapseChip);
         root.add(abandonChip);
 
         int ledgerY = MARGIN_T + HEADER_H + GAP;
@@ -552,6 +567,30 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
+     * Confirms and triggers {@link Engine#collapse()}. Before {@link Board#won}, this just
+     * explains what's missing instead of doing nothing silently — see the COLLAPSE chip's
+     * placement Javadoc in {@link #root()} for why the chip itself doesn't just hide until then.
+     */
+    private void collapse() {
+        if (!engine.board.won) {
+            status.set(List.of(Ui.Seg.of("Collapse is a victory reward", Theme.DIM),
+                    Ui.Seg.of(" - build a Fusion Reactor first.", Theme.DIM)));
+            return;
+        }
+        int answer = JOptionPane.showConfirmDialog(boardPanel,
+                "Collapse the site? Every machine on the board is consumed and refused into one "
+                        + "Monolith across the northern half of your claim, powered the instant it "
+                        + "appears. Resources, research, and the claim itself are untouched, and the "
+                        + "southern half stays free to build on. This cannot be undone.",
+                "Collapse site", JOptionPane.OK_CANCEL_OPTION);
+        if (answer != JOptionPane.OK_OPTION) return;
+        if (engine.collapse()) {
+            status.set(List.of(Ui.Seg.of("The site collapses into a single Monolith.", Theme.AMBER)));
+            refresh();
+        }
+    }
+
+    /**
      * Resets the session to a brand-new site after confirmation, wiping the save file.
      *
      * <p>This does not construct a new {@link Game}/{@link Engine} and swap it into the UI.
@@ -559,13 +598,13 @@ public final class Game implements BoardPanel.Handler {
      * cell}, {@code ore}, {@code rich}, {@code off}) byte-for-byte onto the <em>live</em>
      * board's arrays via {@link System#arraycopy}, and then manually resets every other mutable
      * board field one by one (resources, seen-set, built/tech sets, claim size, energy, click
-     * count, victory flag, log). This is a manual "reset in place": {@code engine}, {@code
-     * boardPanel}, {@code ledger} and every row's closures are all bound to the original {@link
-     * Engine} instance, so replacing that instance would mean re-wiring every listener and
-     * closure built during {@link #root()}. Mutating the existing engine's board arrays in place
-     * avoids that entirely. Resetting {@link Board#won} means the masthead's badge (see {@link
-     * Masthead}) correctly disappears on a fresh site rather than carrying over from the
-     * abandoned one.
+     * count, victory/collapse flags, log). This is a manual "reset in place": {@code engine},
+     * {@code boardPanel}, {@code ledger} and every row's closures are all bound to the original
+     * {@link Engine} instance, so replacing that instance would mean re-wiring every listener
+     * and closure built during {@link #root()}. Mutating the existing engine's board arrays in
+     * place avoids that entirely. Resetting {@link Board#won} and {@link Board#collapsed} means
+     * the masthead's badges (see {@link Masthead}) correctly disappear on a fresh site rather
+     * than carrying over from the abandoned one.
      */
     private void abandon() {
         int answer = JOptionPane.showConfirmDialog(boardPanel,
@@ -587,6 +626,7 @@ public final class Game implements BoardPanel.Handler {
         engine.board.energy = 0;
         engine.board.clicks = 0;
         engine.board.won = false;
+        engine.board.collapsed = false;
         engine.board.log.clear();
         selected = null;
         demolishing = false;
@@ -891,18 +931,15 @@ public final class Game implements BoardPanel.Handler {
      * offset.
      */
     private final class Masthead extends JComponent {
-        /** Fixed size; the masthead's content never changes size regardless of {@link Board#won} so there is no live measurement to do. */
-        @Override public Dimension getPreferredSize() { return new Dimension(300, 34); }
-
         /**
          * Draws "SUBSTRATE" glyph-by-glyph with a manual 7px advance per character (the first
          * three letters in chalk, the rest in amber), then the subtitle starting where the title
-         * left off, then — once {@link Board#won} — a small amber "FUSION ONLINE" badge after
-         * it, then the underline rule. A non-static inner class (unlike most of this file's
-         * other bespoke widgets) purely so this one line can read {@code engine.board.won}
-         * live; the badge is this achievement's only permanent trace in the UI once the
-         * one-time {@link #celebrateVictory()} dialog has been dismissed, so it has to survive
-         * a save/reload, not just the moment the reactor went down.
+         * left off, then — once {@link Board#won} and/or {@link Board#collapsed} — one or two
+         * small amber badges after it, then the underline rule. A non-static inner class (unlike
+         * most of this file's other bespoke widgets) purely so this one line can read {@code
+         * engine.board}'s state live; the badges are these achievements' only permanent trace in
+         * the UI once their one-time confirmation dialogs have been dismissed, so they have to
+         * survive a save/reload, not just the moment they happened.
          */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
@@ -920,9 +957,16 @@ public final class Game implements BoardPanel.Handler {
             g.setColor(Theme.DIM);
             String subtitle = "SURVEY GRID 04   AUTONOMOUS FOUNDRY";
             g.drawString(subtitle, x + 10, 22);
+            float badgeX = x + 10 + g.getFontMetrics().stringWidth(subtitle) + 10;
             if (engine.board.won) {
                 g.setColor(Theme.AMBER);
-                g.drawString("· FUSION ONLINE", x + 10 + g.getFontMetrics().stringWidth(subtitle) + 10, 22);
+                String badge = "· FUSION ONLINE";
+                g.drawString(badge, badgeX, 22);
+                badgeX += g.getFontMetrics().stringWidth(badge) + 10;
+            }
+            if (engine.board.collapsed) {
+                g.setColor(Theme.AMBER);
+                g.drawString("· MONOLITH", badgeX, 22);
             }
             g.setColor(Theme.LINE2);
             g.drawLine(0, 32, getWidth(), 32);
@@ -1403,6 +1447,8 @@ public final class Game implements BoardPanel.Handler {
                     "Furnaces and assemblers scale their inputs with their outputs, so a fused smelter is a throughput monster that will strip your ore stock in seconds. Feed it more rigs."},
                 new String[]{"Victory",
                     "The Fusion Reactor sits at the top of the research tree, gated behind Fission and Geometric Synergy II. Build your first one and the site declares victory - the masthead marks it permanently. Nothing stops afterward; there's no reason not to keep building."},
+                new String[]{"Collapse",
+                    "Once you've won, COLLAPSE consumes every machine on the board and refuses them into a single Monolith across the northern half of your claim - the same fusion rule as any other block, applied to the whole site at once. Resources, research and the claim survive; only what stands on the ground changes, and the southern half stays free to build on. It's repeatable: extend the claim, rebuild, collapse again for a bigger Monolith."},
                 new String[]{"Controls",
                     "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
         }

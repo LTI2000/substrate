@@ -99,6 +99,16 @@ public enum Machine {
             new Role.Generator(900, Map.of()), Tech.FUSION,
             "No fuel. Enormous output.")),
 
+    /**
+     * Not buildable: only ever placed by {@link Engine#collapse()}, which fills a whole
+     * rectangle with it in one shot, so ordinary placement rules (a cost you'd pay per unit,
+     * a tech gate) don't apply. See {@link Engine#collapse()} for why a produce-from-nothing
+     * role is exactly what a fused history of every machine that ever stood here should do.
+     */
+    MONOLITH(Spec.of("Monolith", "MONO", Cost.of(), 0,
+            new Role.Producer(Cost.of(Res.MATTER, 4)), null,
+            "What is left, when everything else becomes one thing.")),
+
     /** Not buildable: the one machine you operate by hand. */
     CORE   (Spec.of("Core", "CORE", Cost.of(), 0, new Role.Conduit(), null,
             "The only thing here that works by hand."));
@@ -111,7 +121,7 @@ public enum Machine {
     /** The content/config record backing this machine; see the class doc. */
     public Spec spec() { return spec; }
 
-    /** Every machine except {@link #CORE}, in declaration (i.e. build-menu) order. */
+    /** Every machine except {@link #CORE} and {@link #MONOLITH}, in declaration (i.e. build-menu) order. */
     public static final List<Machine> BUILDABLE =
-            Arrays.stream(values()).filter(m -> m != CORE).toList();
+            Arrays.stream(values()).filter(m -> m != CORE && m != MONOLITH).toList();
 }

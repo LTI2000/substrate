@@ -73,27 +73,28 @@ public final class Art {
         if (grp.type != Machine.CORE) pad(g, x, y, w, h);
 
         switch (grp.type) {
-            case CORE    -> core(g, x, y, w, h, u, t);
-            case PYLON   -> pylon(g, x, y, w, h, u, tt);
-            case SOLAR   -> solar(g, x, y, w, h, u, tt, grp);
-            case MINER   -> rig(g, x, y, w, h, u, tt * speed, grp);
-            case DRILL   -> derrick(g, x, y, w, h, u, tt * speed, grp);
-            case COND    -> condenser(g, x, y, w, h, u, tt);
-            case FE      -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, Theme.EMBER);
-            case CU      -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), new Color(0xFF, 0xB4, 0x6A));
-            case BURNER  -> burner(g, x, y, w, h, u, tt, seed);
-            case ARM     -> arm(g, x, y, w, h, u, tt);
-            case ASM     -> assembler(g, x, y, w, h, u, tt);
-            case STL     -> foundry(g, x, y, w, h, u, tt);
-            case CAP     -> capacitors(g, x, y, w, h, u, tt, level);
-            case LAB     -> lab(g, x, y, w, h, u, tt);
-            case AMP     -> node(g, x, y, w, h, u, tt);
-            case BLAST   -> blast(g, x, y, w, h, u, tt, seed);
-            case INDUCT  -> induction(g, x, y, w, h, u, tt);
-            case REFINE  -> refinery(g, x, y, w, h, u, tt, seed);
-            case REACTOR -> reactor(g, x, y, w, h, u, tt, seed);
-            case REP     -> replicator(g, x, y, w, h, u, tt);
-            case TOKAMAK -> tokamak(g, x, y, w, h, u, tt);
+            case CORE     -> core(g, x, y, w, h, u, t);
+            case PYLON    -> pylon(g, x, y, w, h, u, tt);
+            case SOLAR    -> solar(g, x, y, w, h, u, tt, grp);
+            case MINER    -> rig(g, x, y, w, h, u, tt * speed, grp);
+            case DRILL    -> derrick(g, x, y, w, h, u, tt * speed, grp);
+            case COND     -> condenser(g, x, y, w, h, u, tt);
+            case FE       -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, Theme.EMBER);
+            case CU       -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), new Color(0xFF, 0xB4, 0x6A));
+            case BURNER   -> burner(g, x, y, w, h, u, tt, seed);
+            case ARM      -> arm(g, x, y, w, h, u, tt);
+            case ASM      -> assembler(g, x, y, w, h, u, tt);
+            case STL      -> foundry(g, x, y, w, h, u, tt);
+            case CAP      -> capacitors(g, x, y, w, h, u, tt, level);
+            case LAB      -> lab(g, x, y, w, h, u, tt);
+            case AMP      -> node(g, x, y, w, h, u, tt);
+            case BLAST    -> blast(g, x, y, w, h, u, tt, seed);
+            case INDUCT   -> induction(g, x, y, w, h, u, tt);
+            case REFINE   -> refinery(g, x, y, w, h, u, tt, seed);
+            case REACTOR  -> reactor(g, x, y, w, h, u, tt, seed);
+            case REP      -> replicator(g, x, y, w, h, u, tt);
+            case TOKAMAK  -> tokamak(g, x, y, w, h, u, tt);
+            case MONOLITH -> monolith(g, x, y, w, h, u, tt);
         }
 
         if (grp.fused()) seams(g, grp, x, y, w, h, u);
@@ -1322,5 +1323,57 @@ public final class Art {
             g.draw(new Arc2D.Double(cx - ringR, cy - ringR, ringR * 2, ringR * 2, a0, 70, Arc2D.OPEN));
         }
         glow(g, cx, cy, outer * (1.05 + 0.1 * Math.sin(t * 3)), Theme.CHERENKOV, 120);
+    }
+
+    /**
+     * The Monolith: every machine the site ever built, fused by {@link Engine#collapse()} into
+     * one shape. Deliberately painted in a different material language from every other
+     * machine in this file — a near-black stone slab rather than {@link #box}/{@link #pad}'s
+     * steel and concrete — so it reads as a monument, not another piece of equipment. This is
+     * always a large fused block in practice (see {@code Engine#collapse}'s minimum 7x3 area),
+     * so the crack/mote counts below scale with {@code w} rather than being fixed, the same way
+     * {@link #solar}'s panel subdivision scales with the fused block's own {@code grp.w}/{@code
+     * grp.h} instead of assuming a single-cell size.
+     *
+     * <p>The cracks and motes are ember-colored and slow-pulsing — every furnace door, burner
+     * firebox, and reactor glow this file draws elsewhere, echoed here as what's left of them,
+     * still faintly burning inside one fused shape instead of many separate machines.
+     */
+    private static void monolith(Graphics2D g, double x, double y, double w, double h, double u, double t) {
+        g.setPaint(new GradientPaint((float) x, (float) y, new Color(0x2E, 0x25, 0x18),
+                (float) (x + w), (float) (y + h), new Color(0x0E, 0x0B, 0x07)));
+        g.fill(new Rectangle2D.Double(x, y, w, h));
+        g.setColor(new Color(0, 0, 0, 160));
+        g.setStroke(new BasicStroke((float) Math.max(1.2, 1.6 * u)));
+        g.draw(new Rectangle2D.Double(x + 0.5, y + 0.5, w - 1, h - 1));
+        g.setColor(new Color(255, 255, 255, 18));
+        g.draw(new Line2D.Double(x + 2, y + 2, x + w - 2, y + 2));
+
+        // Jagged ember-lit cracks, spaced by the slab's actual width rather than a fixed count,
+        // each pulsing on its own phase (offset by k) so the slab doesn't breathe as one unit.
+        int cracks = Math.max(2, (int) (w / (44 * u)));
+        for (int k = 0; k < cracks; k++) {
+            double cx = x + w * (k + 0.5) / cracks;
+            double glowAmt = 0.5 + 0.5 * Math.sin(t * 0.6 + k * 1.7);
+            var crack = new Path2D.Double();
+            crack.moveTo(cx - 6 * u, y + h * 0.12);
+            crack.lineTo(cx + 4 * u, y + h * 0.4);
+            crack.lineTo(cx - 5 * u, y + h * 0.62);
+            crack.lineTo(cx + 6 * u, y + h * 0.88);
+            g.setColor(Theme.alpha(Theme.EMBER, (int) (60 + 110 * glowAmt)));
+            g.setStroke(new BasicStroke((float) Math.max(0.8, 0.5 * u), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(crack);
+            glow(g, cx, y + h * 0.5, 7 * u * glowAmt, Theme.EMBER, (int) (35 * glowAmt));
+        }
+
+        // Ember motes along the slab, each a steady Theme.noise-keyed pulse (not a shared clock)
+        // so they read as many small dying fires rather than one uniform pulse.
+        int motes = Math.max(4, (int) (w / (20 * u)));
+        for (int k = 0; k < motes; k++) {
+            double mx = x + w * (k + 0.5) / motes;
+            double my = y + h * (0.25 + 0.5 * Theme.noise(k * 977));
+            double phase = 0.5 + 0.5 * Math.sin(t * 1.3 + Theme.noise(k * 131) * 20);
+            led(g, mx, my, Math.max(0.9, 1.1 * u), Theme.EMBER, 0.2 + 0.6 * phase);
+        }
     }
 }
