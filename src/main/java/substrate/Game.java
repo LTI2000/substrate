@@ -1225,9 +1225,10 @@ public final class Game implements BoardPanel.Handler {
         }
 
         /**
-         * Draws the card frame, then either the empty-state hint or the icon plus title, meta,
-         * cost (color-coded by what's in stock, same convention {@link ItemRow} uses), and the
-         * wrapped {@link #describe} and blurb text.
+         * Draws the card frame, then either the empty-state hint or the icon (dimmed the same
+         * two-tier way {@link MachineIcon} is: locked dimmer than unlocked-but-unaffordable) plus
+         * title, meta, cost (color-coded by what's in stock, same convention {@link ItemRow}
+         * uses), and the wrapped {@link #describe} and blurb text.
          */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
@@ -1255,9 +1256,11 @@ public final class Game implements BoardPanel.Handler {
             Machine m = selected;
             Spec spec = m.spec();
             boolean unlocked = engine.unlocked(m);
+            boolean afford = unlocked && engine.affordable(engine.priceOf(m));
 
             Composite old = g.getComposite();
-            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
+            else if (!afford) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
             Art.paint(g, previewGroup(m), new Rectangle2D.Double(PAD, PAD, ICON, ICON), 0, false, 0.5);
             g.setComposite(old);
 
