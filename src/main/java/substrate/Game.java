@@ -647,7 +647,12 @@ public final class Game implements BoardPanel.Handler {
      * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear everything, D =
      * toggle dismantle, P = toggle power switch, Q = deselect the armed machine) onto {@code
      * root}'s input/action maps, active whenever the containing window has focus, regardless of
-     * which child component has it.
+     * which child component has it. Also installs a window-wide right-click listener (see
+     * {@link #clearSelection()}) that clears everything exactly like ESCAPE does, from anywhere
+     * in the window — a global {@link java.awt.event.AWTEventListener} rather than a listener on
+     * {@code root} itself, since AWT delivers mouse events to the deepest component under the
+     * cursor, not up through ancestors, so a listener on {@code root} alone would miss clicks on
+     * any child component.
      *
      * @param root the component whose input map the shortcuts are registered on
      */
@@ -660,16 +665,15 @@ public final class Game implements BoardPanel.Handler {
         });
         im.put(KeyStroke.getKeyStroke("ESCAPE"), "clear");
         am.put("clear", new AbstractAction() {
-            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
-                selected = null;
-                demolishing = false;
-                toggling = false;
-                boardPanel.setGhost(null);
-                boardPanel.setDemolishing(false);
-                boardPanel.setToggling(false);
-                refresh();
-            }
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { clearSelection(); }
         });
+        Toolkit.getDefaultToolkit().addAWTEventListener(e -> {
+            if (e instanceof java.awt.event.MouseEvent me
+                    && me.getID() == java.awt.event.MouseEvent.MOUSE_PRESSED
+                    && SwingUtilities.isRightMouseButton(me)) {
+                clearSelection();
+            }
+        }, AWTEvent.MOUSE_EVENT_MASK);
         im.put(KeyStroke.getKeyStroke("D"), "demolish");
         am.put("demolish", new AbstractAction() {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -705,6 +709,21 @@ public final class Game implements BoardPanel.Handler {
                 refresh();
             }
         });
+    }
+
+    /**
+     * Deselects the armed machine and exits dismantle/power-switch mode, clearing the board's
+     * preview overlays. Shared by the ESCAPE shortcut and the right-click-to-cancel listener
+     * (see {@link #bindKeys}) so the two stay in lockstep.
+     */
+    private void clearSelection() {
+        selected = null;
+        demolishing = false;
+        toggling = false;
+        boardPanel.setGhost(null);
+        boardPanel.setDemolishing(false);
+        boardPanel.setToggling(false);
+        refresh();
     }
 
     /** Taps the core for matter and flashes the yield over the board; shared by click and space-bar paths. */

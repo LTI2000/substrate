@@ -1,6 +1,7 @@
 package substrate;
 
 import javax.swing.JComponent;
+import javax.swing.SwingUtilities;
 import javax.swing.event.MouseInputAdapter;
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -74,8 +75,10 @@ public final class BoardPanel extends JComponent {
         this.handler = handler;
         setOpaque(false);
         var mouse = new MouseInputAdapter() {
-            @Override public void mousePressed(MouseEvent e)  { at(e, true); }
-            @Override public void mouseDragged(MouseEvent e)  { at(e, true); }
+            // Left button only: a right-click is handled window-wide, as a cancel — see
+            // Game#bindKeys — and must not also land here as a placement/demolish/tap press.
+            @Override public void mousePressed(MouseEvent e)  { if (SwingUtilities.isLeftMouseButton(e)) at(e, true); }
+            @Override public void mouseDragged(MouseEvent e)  { if (SwingUtilities.isLeftMouseButton(e)) at(e, true); }
             @Override public void mouseMoved(MouseEvent e)    { at(e, false); }
             @Override public void mouseExited(MouseEvent e)   { hoverX = hoverY = -1; repaint(); }
         };
