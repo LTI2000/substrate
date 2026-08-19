@@ -111,6 +111,15 @@ public final class Game implements BoardPanel.Handler {
     private final Map<String, JComponent> tabPanels = new LinkedHashMap<>();
     /** The three tab buttons (BUILD/RESEARCH/MANUAL), kept so {@link #showTab(String)} can toggle their active state. */
     private final List<TabButton> tabs = new ArrayList<>();
+    /**
+     * Every {@link MachineIcon} tile in the BUILD tab's grid, in {@link Machine#BUILDABLE}
+     * order, kept so {@link #refresh()} can hide/show them as research completes (see {@link
+     * #updateMachineIconVisibility()}). Unlike the rest of this class's fixed-once bounds, a
+     * hidden tile still occupies its original grid slot rather than being reflowed away — the
+     * grid just gets gaps where locked machines sit, which is simpler and avoids repositioning
+     * everything below the grid (the "Details" label and card) every time a tech completes.
+     */
+    private final List<MachineIcon> machineIcons = new ArrayList<>();
     /** Research rows keyed by tech, read by {@link #positionTechRows()} to look up each row's current height. */
     private final Map<Tech, ItemRow> techRows = new EnumMap<>(Tech.class);
     /**
@@ -292,11 +301,11 @@ public final class Game implements BoardPanel.Handler {
      * rows, its fixed ~22 items (2 tools + 20 machines + 1 detail card) are known in advance to
      * fit inside {@code SIDE_H}, so there's no scrollable-extent bookkeeping to do at all.
      *
-     * <p>Every icon is always present (never hidden as tech unlocks) — a locked or unaffordable
-     * one just paints itself dimmed, since {@link MachineIcon#paintComponent} reads {@code
-     * engine} live on every repaint. Selecting a locked machine still shows its cost and "needs
-     * X" requirement in the detail card, even though it can't be armed for placement — see
-     * {@link #pickMachine}.
+     * <p>A tile whose machine isn't researched yet is hidden entirely rather than shown dimmed
+     * (see {@link #updateMachineIconVisibility()}, called from {@link #refresh()}); a tile whose
+     * machine is unlocked but currently unaffordable stays visible but paints itself greyed —
+     * desaturated and darkened, not just faded — since {@link MachineIcon#paintComponent} reads
+     * {@code engine} live on every repaint.
      *
      * @return the BUILD tab body
      */
@@ -359,7 +368,9 @@ public final class Game implements BoardPanel.Handler {
             int col = i % cols, row = i / cols;
             icon.setBounds(TAB_PAD + col * (iconSize + iconGap), y + row * (iconSize + iconGap), iconSize, iconSize);
             panel.add(icon);
+            machineIcons.add(icon);
         }
+        updateMachineIconVisibility();
         int rows = (Machine.BUILDABLE.size() + cols - 1) / cols;
         y += rows * (iconSize + iconGap) - iconGap + 10;
 
@@ -385,11 +396,13 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Arms {@code m} for placement, or just shows its detail if it isn't unlocked yet: sets
-     * {@link #selected}, clears the other two board tools, and only sets the {@link BoardPanel}
-     * ghost preview when {@code m} is actually buildable, so a locked machine's cost/blurb still
-     * populates {@link MachineDetail} without letting the player try to place it. Shared by
-     * every {@link MachineIcon}'s click handler.
+     * Arms {@code m} for placement: sets {@link #selected}, clears the other two board tools,
+     * and hands {@code m} to the {@link BoardPanel} as the placement ghost. Only ever called
+     * with an unlocked machine — its {@link MachineIcon} is hidden while locked (see {@link
+     * #updateMachineIconVisibility()}), so there is no click path to reach this with a machine
+     * still gated on research. An unlocked-but-unaffordable machine still arms fine; {@link
+     * BoardPanel}'s ghost preview is what flags it can't actually be placed yet. Shared by every
+     * {@link MachineIcon}'s click handler.
      *
      * @param m the machine icon that was clicked
      */
@@ -399,8 +412,19 @@ public final class Game implements BoardPanel.Handler {
         toggling = false;
         boardPanel.setDemolishing(false);
         boardPanel.setToggling(false);
-        boardPanel.setGhost(engine.unlocked(m) ? m : null);
+        boardPanel.setGhost(m);
         refresh();
+    }
+
+    /**
+     * Hides every {@link MachineIcon} whose machine isn't researched yet, and shows every one
+     * that is — called once from {@link #buildTab()} at construction and again from every
+     * {@link #refresh()} so a tile appears the moment its tech completes (and disappears again
+     * after {@link #abandon()} wipes research back to nothing). A hidden tile keeps its original
+     * grid slot rather than being reflowed away; see {@link #machineIcons}'s Javadoc for why.
+     */
+    private void updateMachineIconVisibility() {
+        for (MachineIcon icon : machineIcons) icon.setVisible(engine.unlocked(icon.machine));
     }
 
     /**
@@ -545,7 +569,8 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Re-syncs all UI surfaces with current engine state: updates the hint text, repositions the
-     * RESEARCH tab's rows in case a tech's done state just changed, and repaints the ledger, the
+     * RESEARCH tab's rows in case a tech's done state just changed, shows/hides BUILD tab
+     * machine icons per {@link #updateMachineIconVisibility()}, and repaints the ledger, the
      * three tab bodies, and the manual. Called after every player action and on a timer from
      * {@link #start()}.
      *
@@ -561,6 +586,7 @@ public final class Game implements BoardPanel.Handler {
     public void refresh() {
         hint.text = hintText();
         positionTechRows();
+        updateMachineIconVisibility();
         ledger.repaint();
         for (JComponent p : tabPanels.values()) p.repaint();
         manual.repaint();
@@ -1133,8 +1159,10 @@ public final class Game implements BoardPanel.Handler {
 
         /**
          * Draws the background wash and border (colored by hover/selected state), the machine's
-         * {@link Art} icon composited at reduced alpha when locked or unaffordable, the owned
-         * count in the top-right corner, and the abbreviation caption along the bottom edge.
+         * {@link Art} icon — greyed out per {@link #paintUnaffordable} when the price can't be
+         * paid right now — the owned count in the top-right corner, and the abbreviation caption
+         * along the bottom edge. Never called for a locked machine: its tile is hidden instead
+         * (see {@link #updateMachineIconVisibility()}).
          */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
@@ -1142,20 +1170,17 @@ public final class Game implements BoardPanel.Handler {
             g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-            boolean unlocked = engine.unlocked(machine);
-            boolean afford = unlocked && engine.affordable(engine.priceOf(machine));
+            boolean afford = engine.affordable(engine.priceOf(machine));
             boolean isSelected = selected == machine;
             int w = getWidth(), h = getHeight();
 
             g.setColor(isSelected ? Theme.alpha(Theme.AMBER, 30) : new Color(52, 42, 28, hover ? 130 : 70));
             g.fillRect(0, 0, w, h);
 
-            Composite old = g.getComposite();
-            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
-            else if (!afford) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
             double pad = 6, captionH = 13;
-            Art.paint(g, preview, new Rectangle2D.Double(pad, pad, w - pad * 2, h - pad * 2 - captionH), 0, false, 0.5);
-            g.setComposite(old);
+            var iconRect = new Rectangle2D.Double(pad, pad, w - pad * 2, h - pad * 2 - captionH);
+            if (afford) Art.paint(g, preview, iconRect, 0, false, 0.5);
+            else paintUnaffordable(g, preview, iconRect);
 
             int owned = engine.board.count(machine);
             if (owned > 0) {
@@ -1166,7 +1191,7 @@ public final class Game implements BoardPanel.Handler {
             }
 
             g.setFont(Theme.mono(9));
-            g.setColor(unlocked ? Theme.DIM : Theme.alpha(Theme.DIM, 130));
+            g.setColor(Theme.DIM);
             String abbr = machine.spec().abbr();
             g.drawString(abbr, (w - g.getFontMetrics().stringWidth(abbr)) / 2f, h - 4);
 
@@ -1191,6 +1216,40 @@ public final class Game implements BoardPanel.Handler {
         var g = new Group(0, m, 0, 0, 1, 1, new int[]{0}, ore, 1, true);
         g.powered = true;
         return g;
+    }
+
+    /**
+     * Paints {@code grp}'s catalogue icon into {@code r} the way an unaffordable machine should
+     * read: dark and colorless, not just faded, so a resource-starved building is unmistakable
+     * at a glance rather than reading as merely dim. {@link Art#paint} has no notion of this —
+     * it only ever draws in full color — so this renders it once into an offscreen image at
+     * {@code r}'s pixel size, then collapses every pixel to its luminance and scales that down,
+     * leaving alpha untouched so the icon's silhouette and antialiased edges are unaffected.
+     * {@code t} is pinned to 0 and {@code hover} to false: a greyed-out icon has no reason to
+     * animate.
+     *
+     * @param g    destination graphics context
+     * @param grp  the machine group to preview (see {@link #previewGroup})
+     * @param r    the rectangle to paint into, in {@code g}'s coordinate space
+     */
+    private static void paintUnaffordable(Graphics2D g, Group grp, Rectangle2D r) {
+        int w = (int) Math.ceil(r.getWidth()), h = (int) Math.ceil(r.getHeight());
+        if (w <= 0 || h <= 0) return;
+        var img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        var ig = img.createGraphics();
+        ig.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Art.paint(ig, grp, new Rectangle2D.Double(0, 0, w, h), 0, false, 0.5);
+        ig.dispose();
+
+        int[] px = img.getRGB(0, 0, w, h, null, 0, w);
+        for (int i = 0; i < px.length; i++) {
+            int p = px[i];
+            int a = p >>> 24, rr = (p >> 16) & 0xFF, gg = (p >> 8) & 0xFF, bb = p & 0xFF;
+            int lum = (int) Math.round((0.3 * rr + 0.59 * gg + 0.11 * bb) * 0.32);
+            px[i] = (a << 24) | (lum << 16) | (lum << 8) | lum;
+        }
+        img.setRGB(0, 0, w, h, px, 0, w);
+        g.drawImage(img, (int) Math.round(r.getX()), (int) Math.round(r.getY()), null);
     }
 
     /**
@@ -1244,9 +1303,11 @@ public final class Game implements BoardPanel.Handler {
         }
 
         /**
-         * Draws the card frame, then either the empty-state hint or the icon (dimmed the same
-         * two-tier way {@link MachineIcon} is: locked dimmer than unlocked-but-unaffordable) plus
-         * title, meta, cost (color-coded by what's in stock, same convention {@link ItemRow}
+         * Draws the card frame, then either the empty-state hint or the icon — greyed out via
+         * {@link #paintUnaffordable} the same way {@link MachineIcon} is when unaffordable, since
+         * {@code selected} is only ever an unlocked machine (its icon is hidden while locked, so
+         * there's no click path to select one — see {@link #updateMachineIconVisibility()}) —
+         * plus title, meta, cost (color-coded by what's in stock, same convention {@link ItemRow}
          * uses), and the wrapped {@link #describe} and blurb text.
          */
         @Override protected void paintComponent(Graphics graphics) {
@@ -1274,14 +1335,11 @@ public final class Game implements BoardPanel.Handler {
 
             Machine m = selected;
             Spec spec = m.spec();
-            boolean unlocked = engine.unlocked(m);
-            boolean afford = unlocked && engine.affordable(engine.priceOf(m));
+            boolean afford = engine.affordable(engine.priceOf(m));
 
-            Composite old = g.getComposite();
-            if (!unlocked) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.28f));
-            else if (!afford) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.55f));
-            Art.paint(g, previewGroup(m), new Rectangle2D.Double(PAD, PAD, ICON, ICON), 0, false, 0.5);
-            g.setComposite(old);
+            var iconRect = new Rectangle2D.Double(PAD, PAD, ICON, ICON);
+            if (afford) Art.paint(g, previewGroup(m), iconRect, 0, false, 0.5);
+            else paintUnaffordable(g, previewGroup(m), iconRect);
 
             int tx = PAD + ICON + GAP;
             int tw = textWidth();
@@ -1293,8 +1351,8 @@ public final class Game implements BoardPanel.Handler {
 
             g.setFont(BODY);
             y += 6 + fm.getHeight();
-            String meta = unlocked ? spec.abbr() + "  built x" + engine.board.count(m) : "needs " + spec.tech().label;
-            g.setColor(unlocked ? Theme.DIM : Theme.HOT);
+            String meta = spec.abbr() + "  built x" + engine.board.count(m);
+            g.setColor(Theme.DIM);
             g.drawString(meta, tx, y);
 
             // One resource per line, not joined inline with " · " like ItemRow's compact list
