@@ -79,8 +79,11 @@ public final class Art {
             case MINER    -> rig(g, x, y, w, h, u, tt * speed, grp);
             case DRILL    -> derrick(g, x, y, w, h, u, tt * speed, grp);
             case COND     -> condenser(g, x, y, w, h, u, tt);
-            case FE       -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, Theme.EMBER);
-            case CU       -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), new Color(0xFF, 0xB4, 0x6A));
+            // Iron burns blue-hot (it smelts at a far higher temperature than copper), copper a
+            // rich orange — distinct flame colors so the two furnaces read apart at a glance
+            // even though they share the same brick-shell silhouette.
+            case FE       -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, new Color(0x57, 0xAA, 0xFF));
+            case CU       -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), new Color(0xFF, 0x7C, 0x2C));
             case BURNER   -> burner(g, x, y, w, h, u, tt, seed);
             case ARM      -> arm(g, x, y, w, h, u, tt);
             case ASM      -> assembler(g, x, y, w, h, u, tt);

@@ -88,10 +88,23 @@ public final class BoardPanel extends JComponent {
 
     /** Arms placement preview for {@code m}; {@code null} clears it. Triggers a repaint. */
     public void setGhost(Machine m)            { ghost = m; repaint(); }
-    /** Toggles the demolish-tool preview. Triggers a repaint. */
-    public void setDemolishing(boolean on)     { demolishing = on; repaint(); }
-    /** Toggles the power-switch-tool preview. Triggers a repaint. */
-    public void setToggling(boolean on)        { toggling = on; repaint(); }
+    /** Toggles the demolish-tool preview. Triggers a repaint and updates the pointer (see {@link #updateCursor()}). */
+    public void setDemolishing(boolean on)     { demolishing = on; updateCursor(); repaint(); }
+    /** Toggles the power-switch-tool preview. Triggers a repaint and updates the pointer (see {@link #updateCursor()}). */
+    public void setToggling(boolean on)        { toggling = on; updateCursor(); repaint(); }
+
+    /**
+     * Sets the pointer to match whichever board tool is active: a crosshair while demolishing
+     * (aiming at a block to remove), a hand while power-toggling (clicking a switch), or the
+     * plain arrow otherwise — including while a machine is armed for placement, which gets no
+     * special cursor of its own since the ghost-square preview under the pointer already marks
+     * where it would land. Called from {@link #setDemolishing} and {@link #setToggling}, the
+     * only two places {@code demolishing}/{@code toggling} ever change.
+     */
+    private void updateCursor() {
+        int id = demolishing ? Cursor.CROSSHAIR_CURSOR : toggling ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR;
+        setCursor(Cursor.getPredefinedCursor(id));
+    }
     /** Seconds elapsed since this panel was constructed; the shared clock every animation is timed against. */
     public double clock()                      { return (System.nanoTime() - start) / 1e9; }
 
