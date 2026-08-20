@@ -38,7 +38,7 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
   remove the whole fused block, or shift-click to take out only the single cell under the cursor.
   Either way the refund is half.
 - Clicking an already-armed machine in the build panel keeps it armed — it does not deselect. Press
-  Q to drop it, or Escape to clear every tool at once.
+  Escape, or right-click anywhere, to clear every tool at once.
 - Machines only run if they are connected to the core through a chain of touching machines. Pylons
   are the cheap way to reach a distant ore patch.
 - Power Switch (or press P) toggles a whole fused block off — it stops drawing power and producing

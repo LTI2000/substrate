@@ -673,8 +673,8 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear everything, D =
-     * toggle dismantle, P = toggle power switch, Q = deselect the armed machine, SHIFT down/up =
-     * keep the board's single-cell dismantle preview in step with the modifier) onto {@code
+     * toggle dismantle, P = toggle power switch, SHIFT down/up = keep the board's single-cell
+     * dismantle preview in step with the modifier) onto {@code
      * root}'s input/action maps, active whenever the containing window has focus, regardless of
      * which child component has it. Also installs a window-wide right-click listener (see
      * {@link #clearSelection()}) that clears everything exactly like ESCAPE does, from anywhere
@@ -724,17 +724,6 @@ public final class Game implements BoardPanel.Handler {
                 boardPanel.setGhost(null);
                 boardPanel.setDemolishing(false);
                 boardPanel.setToggling(toggling);
-                refresh();
-            }
-        });
-        im.put(KeyStroke.getKeyStroke("Q"), "deselect");
-        am.put("deselect", new AbstractAction() {
-            // Clicking a build row now only ever arms it (see buildTab()'s row handler) — it
-            // never deselects on a second click — so Q is the one dedicated way to drop the
-            // armed machine. Scoped to just the selection/ghost, unlike ESCAPE's clear-everything.
-            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
-                selected = null;
-                boardPanel.setGhost(null);
                 refresh();
             }
         });
@@ -1553,7 +1542,7 @@ public final class Game implements BoardPanel.Handler {
                 new String[]{"Collapse",
                     "Once you've won, COLLAPSE consumes every machine on the board and refuses them into a single Monolith across the northern half of your claim - the same fusion rule as any other block, applied to the whole site at once. Resources, research and the claim survive; only what stands on the ground changes, and the southern half stays free to build on. It's repeatable: extend the claim, rebuild, collapse again for a bigger Monolith."},
                 new String[]{"Controls",
-                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
+                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Escape, or a right-click anywhere, clears everything at once - the armed machine included. The site saves itself every twenty seconds."});
         }
 
         /**
