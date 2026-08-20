@@ -49,7 +49,7 @@ public final class RenderTool {
         var engine = TestSite.sampler();
         var panel = new BoardPanel(engine, new BoardPanel.Handler() {
             @Override
-            public void pressed(int x, int y, Group g) {
+            public void pressed(int x, int y, Group g, boolean shift) {
             }
 
             @Override

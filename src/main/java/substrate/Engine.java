@@ -396,23 +396,54 @@ public final class Engine {
     /**
      * Removes a whole fused block and refunds half of what it cost.
      *
-     * <p>Because {@link #priceOf} inflates with every unit built and nothing tracks what a
-     * cell actually paid at placement time, the refund instead reconstructs history: it
-     * walks back through the {@link Board#count(Machine)} build order to sum what each of
-     * the block's {@code area} units would have cost at its point in that order
-     * ({@code 1.14^(units built before it)}), and refunds half of that total. This
-     * "undoes the price ramp" for exactly the units being removed rather than requiring a
-     * per-cell paid-cost ledger.
+     * <p>See {@link #scrap} for how the refund is worked out. Removing every cell at once is
+     * the default gesture; {@link #demolishCell} takes a single cell out of the same block.
      */
     public void demolish(Group g) {
         if (g == null || g.type == Machine.CORE) return;
-        int owned = board.count(g.type);
+        scrap(g.type, g.cells);
+    }
+
+    /**
+     * Removes exactly one cell, leaving the rest of whatever block it belonged to standing.
+     * Refunded on the same terms as {@link #demolish}, for the single unit taken out.
+     *
+     * <p>Nothing else has to be told the block just changed shape: the surviving cells are
+     * re-fused from scratch on the next {@link #recompute()}, so a 3x3 clipped at a corner
+     * simply comes back as whatever rectangles now fit — often a smaller fused block plus
+     * loose cells, and the {@code area}<sup>{@code exponent}</sup> output falls accordingly.
+     *
+     * @param x cell column
+     * @param y cell row
+     */
+    public void demolishCell(int x, int y) {
+        int i = Board.idx(x, y);
+        Machine m = board.cell[i];
+        if (m == null || m == Machine.CORE) return;
+        scrap(m, new int[]{i});
+    }
+
+    /**
+     * Clears {@code cells} (all of them the same {@code type}) off the board and pays back half
+     * of what they cost.
+     *
+     * <p>Because {@link #priceOf} inflates with every unit built and nothing tracks what a
+     * cell actually paid at placement time, the refund instead reconstructs history: it
+     * walks back through the {@link Board#count(Machine)} build order to sum what each of
+     * the removed units would have cost at its point in that order
+     * ({@code 1.14^(units built before it)}), and refunds half of that total. This
+     * "undoes the price ramp" for exactly the units being removed rather than requiring a
+     * per-cell paid-cost ledger — so scrapping a block one cell at a time pays out exactly
+     * the same total as scrapping it in one go.
+     */
+    private void scrap(Machine type, int[] cells) {
+        int owned = board.count(type);
         double factor = 0;
-        for (int k = 0; k < g.area; k++) factor += Math.pow(1.14, Math.max(0, owned - 1 - k));
-        for (var e : g.type.spec().cost().entrySet())
+        for (int k = 0; k < cells.length; k++) factor += Math.pow(1.14, Math.max(0, owned - 1 - k));
+        for (var e : type.spec().cost().entrySet())
             board.add(e.getKey(), e.getValue() * factor * 0.5);
-        for (int i : g.cells) { board.cell[i] = null; board.off[i] = false; }
-        board.built.put(g.type, Math.max(0, owned - g.area));
+        for (int i : cells) { board.cell[i] = null; board.off[i] = false; }
+        board.built.put(type, Math.max(0, owned - cells.length));
         dirty = true;
     }
 

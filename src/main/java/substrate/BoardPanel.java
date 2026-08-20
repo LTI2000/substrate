@@ -38,8 +38,13 @@ public final class BoardPanel extends JComponent {
 
     /** Callbacks for board interaction, implemented by the owning screen. */
     public interface Handler {
-        /** Left press on a cell, including drag-through. */
-        void pressed(int x, int y, Group group);
+        /**
+         * Left press on a cell, including drag-through.
+         *
+         * @param shift whether SHIFT was held, which narrows the dismantle tool to the single
+         *              clicked cell instead of the whole fused block
+         */
+        void pressed(int x, int y, Group group, boolean shift);
         /** Pointer moved onto a new cell. */
         void hovered(int x, int y, Group group);
     }
@@ -62,6 +67,16 @@ public final class BoardPanel extends JComponent {
     private boolean toggling;
     /** Board cell currently under the mouse, or {@code -1, -1} when the pointer is outside the grid. */
     private int hoverX = -1, hoverY = -1;
+    /**
+     * Whether SHIFT is currently held, which turns the demolish tool from block-at-a-time into
+     * cell-at-a-time — in {@link #ghostPreview}'s outline, in the cursor {@link #updateCursor}
+     * picks, and in what {@link Handler#pressed} is told. Kept in sync from two directions,
+     * because either alone leaves the preview stale: every mouse event refreshes it from
+     * {@link MouseEvent#isShiftDown()} (so it is right for the press being dispatched), and
+     * {@link #setShiftHeld} is driven by the window's SHIFT key bindings (so merely pressing or
+     * releasing SHIFT over a motionless pointer redraws).
+     */
+    private boolean shiftHeld;
     /** {@link #clock()} time the last core ripple started; far in the past so no ripple shows initially. */
     private double coreFlashAt = -10;
     /** Text of the currently rising "+N" floater, or {@code null} when none is showing. */
@@ -93,20 +108,28 @@ public final class BoardPanel extends JComponent {
     public void setDemolishing(boolean on)     { demolishing = on; updateCursor(); repaint(); }
     /** Toggles the power-switch-tool preview. Triggers a repaint and updates the pointer (see {@link #updateCursor()}). */
     public void setToggling(boolean on)        { toggling = on; updateCursor(); repaint(); }
+    /**
+     * Records SHIFT going down or up (see {@link #shiftHeld}). Does nothing at all unless the
+     * state actually changed, since this is driven by key bindings that autorepeat while SHIFT
+     * is held down and would otherwise reset the cursor dozens of times a second.
+     */
+    public void setShiftHeld(boolean on)       { if (shiftHeld != on) { shiftHeld = on; updateCursor(); repaint(); } }
 
     /**
      * Sets the pointer to match whichever board tool is active, using the custom-drawn {@link
      * Cursors} glyphs rather than a plain OS cursor: a red targeting reticle while demolishing
-     * (aiming at a block to remove), the PWR tool's broken-ring glyph while power-toggling
-     * (clicking a switch), or a plain amber crosshair otherwise — including while a machine is
-     * armed for placement, which gets no cursor of its own beyond that default crosshair, since
-     * the ghost-square preview under the pointer already marks where it would land. Called from
-     * the constructor (so the board never shows a bare OS arrow) and from {@link #setDemolishing}
-     * and {@link #setToggling}, the only two places {@code demolishing}/{@code toggling} change
-     * after that.
+     * (aiming at a block to remove) — bracketed down to one cell while SHIFT narrows the same
+     * tool, matching what {@link #ghostPreview} outlines — the PWR tool's broken-ring glyph while
+     * power-toggling (clicking a switch), or a plain amber crosshair otherwise — including while
+     * a machine is armed for placement, which gets no cursor of its own beyond that default
+     * crosshair, since the ghost-square preview under the pointer already marks where it would
+     * land. Called from the constructor (so the board never shows a bare OS arrow) and from
+     * {@link #setDemolishing}, {@link #setToggling} and {@link #setShiftHeld}, the only places
+     * the three flags it reads change after that.
      */
     private void updateCursor() {
-        setCursor(demolishing ? Cursors.DEMOLISH : toggling ? Cursors.TOGGLE : Cursors.POINT);
+        setCursor(demolishing ? (shiftHeld ? Cursors.DEMOLISH_CELL : Cursors.DEMOLISH)
+                : toggling ? Cursors.TOGGLE : Cursors.POINT);
     }
     /** Seconds elapsed since this panel was constructed; the shared clock every animation is timed against. */
     public double clock()                      { return (System.nanoTime() - start) / 1e9; }
@@ -126,6 +149,7 @@ public final class BoardPanel extends JComponent {
      * the ghost/demolish preview.
      */
     private void at(MouseEvent e, boolean press) {
+        setShiftHeld(e.isShiftDown());
         double cs = cellSize();
         int x = (int) Math.floor((e.getX() - originX(cs)) / cs);
         int y = (int) Math.floor((e.getY() - originY(cs)) / cs);
@@ -135,7 +159,7 @@ public final class BoardPanel extends JComponent {
         }
         Group g = engine.layout().at(x, y);
         if (press) {
-            handler.pressed(x, y, g);
+            handler.pressed(x, y, g, shiftHeld);
         } else if (x != hoverX || y != hoverY) {
             hoverX = x; hoverY = y;
             handler.hovered(x, y, g);
@@ -356,10 +380,12 @@ public final class BoardPanel extends JComponent {
 
     /**
      * Draws whatever the cursor is currently doing to the hovered cell: in demolish mode, an
-     * outline around the fused block that would be removed; in power-switch mode, an outline
-     * around the fused block that would be toggled, colored by which way the click would flip
-     * it; otherwise, a tinted square previewing placement of {@link #ghost}, colored amber if
-     * legal (empty, claimed, ore-compatible, affordable) or hot/red if not.
+     * outline around the fused block that would be removed — or, with SHIFT held, the block
+     * outlined faintly with only the single cell that would come out drawn solid; in
+     * power-switch mode, an outline around the fused block that would be toggled, colored by
+     * which way the click would flip it; otherwise, a tinted square previewing placement of
+     * {@link #ghost}, colored amber if legal (empty, claimed, ore-compatible, affordable) or
+     * hot/red if not.
      */
     private void ghostPreview(Graphics2D g, double ox, double oy, double cs) {
         if (hoverX < 0 || hoverY < 0) return;
@@ -369,9 +395,19 @@ public final class BoardPanel extends JComponent {
         if (demolishing) {
             Group grp = engine.layout().at(hoverX, hoverY);
             if (grp != null && grp.type != Machine.CORE) {
-                g.setColor(Theme.alpha(Theme.HOT, 150));
+                var block = new Rectangle2D.Double(ox + grp.x * cs + 1, oy + grp.y * cs + 1, grp.w * cs - 2, grp.h * cs - 2);
                 g.setStroke(new BasicStroke(1.6f));
-                g.draw(new Rectangle2D.Double(ox + grp.x * cs + 1, oy + grp.y * cs + 1, grp.w * cs - 2, grp.h * cs - 2));
+                // With SHIFT the block outline drops back to a hint of what the cell belongs to,
+                // and the one doomed cell is filled — so the two gestures read differently at a
+                // glance, without the single-cell marker being lost inside the block's own edge.
+                g.setColor(Theme.alpha(Theme.HOT, shiftHeld ? 60 : 150));
+                g.draw(block);
+                if (shiftHeld) {
+                    g.setColor(Theme.alpha(Theme.HOT, 55));
+                    g.fill(new Rectangle2D.Double(px, py, cs, cs));
+                    g.setColor(Theme.alpha(Theme.HOT, 190));
+                    g.draw(new Rectangle2D.Double(px + 0.5, py + 0.5, cs - 1, cs - 1));
+                }
             }
             return;
         }

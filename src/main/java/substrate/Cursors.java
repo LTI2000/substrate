@@ -18,7 +18,9 @@ import java.awt.image.BufferedImage;
  * underneath; the only thing the cursor adds is the dark halo of {@link #outlineThenColor}, a
  * legibility device the tile doesn't need because its own wash is already dark.
  * {@link #POINT} has no equivalent tool icon; it's a plain crosshair in the same amber the ghost
- * placement preview uses, so the "no tool armed" pointer still belongs to the same palette.
+ * placement preview uses, so the "no tool armed" pointer still belongs to the same palette. Nor
+ * does {@link #DEMOLISH_CELL}, which is the DISM reticle re-drawn for the shift-held, one-cell
+ * form of the same tool rather than a tool with a button of its own.
  *
  * <p>Each cursor is rendered once, at class-load time, into a transparent {@link BufferedImage}
  * and handed to {@link Toolkit#createCustomCursor}, which requires a live display and throws
@@ -38,6 +40,8 @@ final class Cursors {
     static final Cursor POINT = build("point", Cursors::paintPoint, Cursor.DEFAULT_CURSOR);
     /** Demolish tool active: the DISM tool's own glyph, a red targeting reticle, in {@code paintDismantleGlyph}'s danger red. */
     static final Cursor DEMOLISH = build("demolish", Cursors::paintDemolish, Cursor.CROSSHAIR_CURSOR);
+    /** Demolish tool with SHIFT held, i.e. aimed at one cell rather than the whole block: {@link #DEMOLISH}'s reticle, tightened. */
+    static final Cursor DEMOLISH_CELL = build("demolishCell", Cursors::paintDemolishCell, Cursor.CROSSHAIR_CURSOR);
     /** Power-switch tool active: the same broken-ring-and-tick glyph as the PWR tool icon. */
     static final Cursor TOGGLE = build("toggle", Cursors::paintToggle, Cursor.HAND_CURSOR);
 
@@ -102,6 +106,29 @@ final class Cursors {
             g.draw(new Line2D.Double(c, c + tickIn, c, c + tickOut));
             g.draw(new Line2D.Double(c - tickOut, c, c - tickIn, c));
             g.draw(new Line2D.Double(c + tickIn, c, c + tickOut, c));
+        });
+    }
+
+    /**
+     * The shift-held demolish reticle: the same ring and X as {@link #paintDemolish}, shrunk, with
+     * that glyph's four straight axis ticks swapped for four corner brackets closing a square
+     * around it. The brackets are the whole point — a frame drawn tight around one cell is what
+     * separates "this one cell" from the block-wide gesture at pointer size, where a size change
+     * alone wouldn't register. Deliberately the one cursor with no matching {@code ToolIcon}: it
+     * is a modifier on the DISM tool, not a tool of its own, so there is no button to mirror.
+     */
+    private static void paintDemolishCell(Graphics2D g, double c) {
+        double rad = c * 0.46, in = rad * 0.52, s = c * 0.86, arm = s * 0.45;
+        outlineThenColor(g, Theme.alpha(Theme.HOT, 235), 3.6f, 1.8f, () -> {
+            g.draw(new Ellipse2D.Double(c - rad, c - rad, rad * 2, rad * 2));
+            g.draw(new Line2D.Double(c - in, c - in, c + in, c + in));
+            g.draw(new Line2D.Double(c + in, c - in, c - in, c + in));
+            for (int sx = -1; sx <= 1; sx += 2)
+                for (int sy = -1; sy <= 1; sy += 2) {
+                    double x = c + sx * s, y = c + sy * s;
+                    g.draw(new Line2D.Double(x, y, x - sx * arm, y));
+                    g.draw(new Line2D.Double(x, y, x, y - sy * arm));
+                }
         });
     }
 

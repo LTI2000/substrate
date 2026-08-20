@@ -225,6 +225,38 @@ class EngineTest {
     }
 
     /**
+     * Checks that taking a block apart one cell at a time (the shift-click gesture) pays back
+     * exactly what scrapping it in one click pays: both walk the same {@code 1.14} price ramp
+     * downward from the current unit count, so the choice of gesture is never a refund exploit
+     * in either direction. See {@code Engine#scrap}.
+     */
+    @Test
+    @DisplayName("dismantling cell by cell refunds the same as dismantling the block")
+    void piecemealRefundMatchesWholeBlock() {
+        double whole = refundFor(false), piecemeal = refundFor(true);
+        assertEquals(whole, piecemeal, whole * 1e-9, "same four units removed, same money back");
+        assertTrue(whole > 0, "scrapping pays something back at all");
+    }
+
+    /** Builds an identical 2x2 of pylons on a fresh site, scraps it either way, and reports the refund. */
+    private static double refundFor(boolean cellByCell) {
+        var e = TestSite.blank();
+        var b = e.board;
+        b.claim = 15;
+        build(e, Machine.PYLON, 5, 5, 2, 2);
+        e.recompute();
+        zero(b);
+        if (cellByCell) {
+            for (int y = 5; y <= 6; y++)
+                for (int x = 5; x <= 6; x++) e.demolishCell(x, y);
+        } else {
+            e.demolish(e.layout().at(5, 5));
+        }
+        assertEquals(0, b.count(Machine.PYLON), "either way the whole block is gone");
+        return b.get(Res.MATTER);
+    }
+
+    /**
      * Checks the victory condition: placing the first Fusion Reactor latches {@link Board#won}
      * permanently and logs the moment, and that demolishing the reactor afterward leaves the
      * flag set — it's a record of having once reached the top of the tech tree, not a live

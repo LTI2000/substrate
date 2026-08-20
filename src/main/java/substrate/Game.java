@@ -339,7 +339,8 @@ public final class Game implements BoardPanel.Handler {
             boardPanel.setGhost(null);
             refresh();
         });
-        demolishIcon.setToolTipText("Dismantle: click a machine to remove the whole block, half cost back.");
+        demolishIcon.setToolTipText("Dismantle: click a machine to remove the whole block, "
+                + "shift-click for a single cell. Half cost back either way.");
         demolishIcon.setBounds(TAB_PAD, y, toolSize, toolSize);
         panel.add(demolishIcon);
 
@@ -672,7 +673,8 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear everything, D =
-     * toggle dismantle, P = toggle power switch, Q = deselect the armed machine) onto {@code
+     * toggle dismantle, P = toggle power switch, Q = deselect the armed machine, SHIFT down/up =
+     * keep the board's single-cell dismantle preview in step with the modifier) onto {@code
      * root}'s input/action maps, active whenever the containing window has focus, regardless of
      * which child component has it. Also installs a window-wide right-click listener (see
      * {@link #clearSelection()}) that clears everything exactly like ESCAPE does, from anywhere
@@ -736,6 +738,19 @@ public final class Game implements BoardPanel.Handler {
                 refresh();
             }
         });
+        // SHIFT isn't a command of its own — it modifies the dismantle click into a single-cell
+        // one. The board already reads the modifier off each mouse event, so these two bindings
+        // exist purely so the preview switches the moment SHIFT goes down or up, even if the
+        // pointer never moves. See BoardPanel#shiftHeld.
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_SHIFT,
+                java.awt.event.InputEvent.SHIFT_DOWN_MASK, false), "shiftDown");
+        am.put("shiftDown", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { boardPanel.setShiftHeld(true); }
+        });
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_SHIFT, 0, true), "shiftUp");
+        am.put("shiftUp", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { boardPanel.setShiftHeld(false); }
+        });
     }
 
     /**
@@ -766,9 +781,10 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * {@link BoardPanel.Handler} callback for a left click/drag-through on a cell. Dispatches by
-     * current mode: dismantle mode demolishes the clicked block, power-switch mode flips it on
-     * or off (neither applies to the core), otherwise clicking the core taps it, and clicking
-     * with a machine selected attempts placement.
+     * current mode: dismantle mode demolishes the clicked block — or, with SHIFT held, only the
+     * one cell clicked — power-switch mode flips it on or off (neither applies to the core),
+     * otherwise clicking the core taps it, and clicking with a machine selected attempts
+     * placement.
      *
      * <p>Placement is the one path that can flip {@link Board#won}, so it's the one place that
      * diffs {@code engine.board.won} across the call and fires {@link #celebrateVictory()} on
@@ -778,11 +794,12 @@ public final class Game implements BoardPanel.Handler {
      * @param x     cell column
      * @param y     cell row
      * @param group the fused block occupying the cell, or {@code null} if empty
+     * @param shift whether SHIFT was held, narrowing dismantle to the single clicked cell
      */
-    @Override public void pressed(int x, int y, Group group) {
+    @Override public void pressed(int x, int y, Group group, boolean shift) {
         if (demolishing) {
             if (group != null && group.type != Machine.CORE) {
-                engine.demolish(group);
+                if (shift) engine.demolishCell(x, y); else engine.demolish(group);
                 refresh();
             }
             return;
@@ -1536,7 +1553,7 @@ public final class Game implements BoardPanel.Handler {
                 new String[]{"Collapse",
                     "Once you've won, COLLAPSE consumes every machine on the board and refuses them into a single Monolith across the northern half of your claim - the same fusion rule as any other block, applied to the whole site at once. Resources, research and the claim survive; only what stands on the ground changes, and the southern half stays free to build on. It's repeatable: extend the claim, rebuild, collapse again for a bigger Monolith."},
                 new String[]{"Controls",
-                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
+                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Q drops whatever machine is armed. Escape clears everything at once. The site saves itself every twenty seconds."});
         }
 
         /**

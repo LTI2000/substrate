@@ -174,4 +174,33 @@ class FusionTest {
         assertEquals(before - 8, b.count(Machine.COND));
         assertTrue(b.cell[Board.idx(5, 7)] == null && b.cell[Board.idx(6, 10)] == null);
     }
+
+    /**
+     * Checks the shift-click gesture: {@link Engine#demolishCell} takes out exactly the cell
+     * asked for, leaves every other cell of the block standing, and lets the survivors re-fuse
+     * into whatever rectangles still fit — here a 3x3 clipped at its top-right corner comes back
+     * as a 2x3 block plus two loose cells, and the core itself refuses to be picked apart.
+     */
+    @Test
+    @DisplayName("shift-dismantling takes one cell and re-fuses what is left")
+    void demolishCellLeavesTheRest() {
+        var e = TestSite.blank();
+        var b = e.board;
+        b.claim = 15;
+        build(e, Machine.COND, 3, 3, 3, 3);
+        e.recompute();
+        assertEquals(9, e.layout().at(3, 3).area);
+        int before = b.count(Machine.COND);
+
+        e.demolishCell(5, 3);
+        e.recompute();
+        assertEquals(before - 1, b.count(Machine.COND), "only the one unit left the books");
+        assertTrue(b.cell[Board.idx(5, 3)] == null, "the clicked cell is gone");
+        assertEquals("COND@3,3 2x3 | COND@5,4 1x1 | COND@5,5 1x1", signature(e.layout()),
+                "the clipped corner re-fuses into a smaller block plus whatever is left over");
+        integrity(b, e.layout(), "clipped 3x3");
+
+        e.demolishCell(Board.CX, Board.CY);
+        assertEquals(Machine.CORE, b.cell[Board.idx(Board.CX, Board.CY)], "the core can't be picked apart");
+    }
 }

@@ -34,7 +34,9 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 ## Playing
 
 - Click the core (or press space) to condense matter by hand.
-- Build from the panel on the right; click a placed machine to dismantle the whole fused block, at half refund.
+- Build from the panel on the right; with the dismantle tool armed, click a placed machine to
+  remove the whole fused block, or shift-click to take out only the single cell under the cursor.
+  Either way the refund is half.
 - Clicking an already-armed machine in the build panel keeps it armed — it does not deselect. Press
   Q to drop it, or Escape to clear every tool at once.
 - Machines only run if they are connected to the core through a chain of touching machines. Pylons

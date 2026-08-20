@@ -38,7 +38,7 @@ class ArtTest {
     private static BoardPanel panelFor(Engine e, int size) {
         var panel = new BoardPanel(e, new BoardPanel.Handler() {
             @Override
-            public void pressed(int x, int y, Group g) {
+            public void pressed(int x, int y, Group g, boolean shift) {
             }
 
             @Override

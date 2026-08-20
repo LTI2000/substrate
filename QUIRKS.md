@@ -105,14 +105,16 @@ an oversight.
 
 - **Exponential per-unit price inflation, computed fresh every query** —
   `priceOf` multiplies base cost by `1.14^(units already built)`, uncached.
-  The same `1.14` literal is repeated independently in `demolish` rather than
-  named once.
+  The same `1.14` literal is repeated independently in `Engine.scrap` (the
+  refund path behind `demolish`/`demolishCell`) rather than named once.
   (`src/main/java/substrate/Engine.java:63-68, 252`)
 
 - **Demolition refund reconstructs price history** — refunding a fused block
   sums `1.14^(max(0, owned-1-k)) * cost * 0.5` for each cell in the block,
   re-deriving what each unit *would have cost* at its point in build order,
-  rather than tracking actual paid cost per cell.
+  rather than tracking actual paid cost per cell. Shift-clicking the same block
+  apart one cell at a time walks the identical ramp downward, so the piecemeal
+  total matches the one-click refund exactly.
   (`src/main/java/substrate/Engine.java:247-258`)
 
 - **Proportional fuel allocation across generators** — when demand exceeds
