@@ -271,11 +271,23 @@ an oversight.
   than it needs to be.
   (`src/main/java/substrate/Game.java:574-577`)
 
-- **A static mutable field as poor-man's dependency injection** —
-  `ItemRow.stock` is a package-visible `static Board` set once by `Game`'s
-  constructor, purely so a static helper can check affordability without
-  threading a `Board` reference through the `Model` interface.
-  (`src/main/java/substrate/ItemRow.java:125`)
+- **A tech tree laid out by hand, gutters and all** — `TechTree` runs a
+  three-pass graph layout with no library behind it: tiers by longest path to
+  a root, then one barycenter pass to order each tier, then a snap onto a
+  shared column grid. That last step is load-bearing rather than cosmetic —
+  because every tier uses the same column pitch, the vertical gutters between
+  columns are node-free in *every* tier, which is what lets an edge that skips
+  a tier drop into a gutter and run past it without ever crossing a tile it has
+  nothing to do with.
+  (`src/main/java/substrate/TechTree.java:160-300`)
+
+- **A price written three ways, and whichever fits wins** — a tech tile is
+  about 107px wide, which the full price text clears for only 6 of the 28
+  techs. So `TechTree.paintPrice` builds the same price as
+  `"800 steel · 60 data"`, `"800 ste · 60 dat"` and `"800 60"`, measures each,
+  and draws the widest one that fits — with each number in its resource's own
+  colour, so even the bare-numbers form still says what it wants.
+  (`src/main/java/substrate/TechTree.java:460-508`)
 
 - **Abandoning a site copies array contents in place rather than replacing
   the Engine** — `Game.abandon()` builds a throwaway fresh `Engine`, then

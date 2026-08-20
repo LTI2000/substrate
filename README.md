@@ -33,9 +33,10 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 
 ## Playing
 
-- The main panel has two tabs: MAP is the site itself, RESEARCH is the tech tree, two columns
-  of it. The panel on the right stays put across both, so you can shop the build palette or read
-  the manual while either view is up.
+- The main panel has two tabs: MAP is the site itself, RESEARCH is the tech tree drawn as a
+  tree — every upgrade an icon tile, wired to the ones that unlock it. Hover a tile to light up
+  everything it needs and read its price in the status bar; click one to buy it. The panel on the
+  right stays put across both, so you can shop the build palette or read the manual either way.
 - Click the core (or press space) to condense matter by hand.
 - Build from the panel on the right; arming a machine or a tool switches the main panel back to
   MAP so you have somewhere to click. With the dismantle tool armed, click a placed machine to
@@ -65,11 +66,12 @@ src/main/java/substrate/
   Engine, Fusion, Board, Group, OreGen   the simulation
   Machine, Spec, Role, Res, Tech, Cost   the catalogue, as data
   Art                                    every machine, drawn and animated
-  Game, BoardPanel, LedgerPanel, ...     the Swing front end
+  Game, BoardPanel, TechTree, ...        the Swing front end
                                          (Game: MAP/RESEARCH main tabs, BUILD/MANUAL side tabs)
   Save, Main                             persistence and the entry point
 src/test/java/substrate/
-  FusionTest, EngineTest, SessionTest    30 assertions over the rules
+  FusionTest, EngineTest, SessionTest    35 assertions over the rules
+  TechTreeTest                           the research tree's layout holds together
   ArtTest                                paints offscreen and checks things move
   TestSite, RenderTool                   fixtures, plus a PNG dump for headless review
 ```

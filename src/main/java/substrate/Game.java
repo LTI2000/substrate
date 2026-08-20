@@ -7,8 +7,6 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,15 +17,15 @@ import java.util.function.BooleanSupplier;
  * MAP / RESEARCH tabs and the side panel's BUILD / MANUAL tabs around a single {@link Engine},
  * and routes board clicks and hovers back into engine calls. This is the only class that knows
  * how the simulation is laid out on screen; everything downstream ({@link BoardPanel}, {@link
- * LedgerPanel}, {@link ItemRow}, ...) is a dumb view driven from here.
+ * TechTree}, {@link LedgerPanel}, ...) is a dumb view driven from here.
  *
  * <p>The window is two columns. The left one is the main panel ({@link #main()}): masthead and
  * ledger above it, status bar below, and in between a two-tab deck holding the board itself and
  * the research page — the two full-size views of the site, one at a time. The right one is the
  * side panel ({@link #side()}): the build palette and the manual, the two things you want open
- * *while* looking at either view. Research lived in the side panel originally and was 330px wide
- * for it; as a main-panel tab it gets the board's full width and lays its rows out in columns
- * (see {@link #RESEARCH_COLS}).
+ * *while* looking at either view. Research lived in the side panel originally, as a 330px-wide
+ * list of rows; as a main-panel tab it got the board's full width, and with the width to spend it
+ * became {@link TechTree} — the same techs drawn as the dependency graph they actually form.
  *
  * <p><b>Every component is placed with an explicit {@code setBounds} rect, computed once, from
  * fixed constants.</b> There is no {@link LayoutManager} anywhere in this class — no {@link
@@ -36,27 +34,25 @@ import java.util.function.BooleanSupplier;
  * there is never a "reflow when the container's size changes" case to handle. {@link #root()},
  * {@link #main()} and {@link #side()} lay out their children from hand-picked constants (the
  * block right after this Javadoc); {@link #buildTab()} does the same for a fixed-size,
- * non-scrolling page since its ~22 items are known to fit; {@link #techPage()} positions {@link
- * ItemRow}s with a "shortest column so far" loop ({@link #positionTechRows()}) since the research
- * list still doesn't entirely fit and needs a scrollbar — the one piece of Swing's built-in
- * scrolling machinery kept, since
- * panning a fixed-size, statically-positioned canvas isn't the kind of dynamic layout this is
- * about avoiding. Both mechanisms replace an earlier version built on {@code BoxLayout} +
+ * non-scrolling page since its ~22 items are known to fit; {@link TechTree} places its own tiles
+ * from the prerequisite graph, once, and is handed to a scrollbar because nine tiers of them
+ * don't fit the panel's height — the one piece of Swing's built-in scrolling machinery kept,
+ * since panning a fixed-size, statically-positioned canvas isn't the kind of dynamic layout this
+ * is about avoiding. All of it replaces an earlier version built on {@code BoxLayout} +
  * {@code GridLayout} + {@code FlowLayout} + {@code CardLayout}, which chased a run of
  * hard-to-predict bugs around stale cached preferred sizes, {@code revalidate()} timing, and
  * cells stretching to fill a container they weren't supposed to — the entire class of bug this
  * rewrite exists to rule out by construction: nothing here is ever asked "what size do you want
  * to be," so nothing can answer that question incorrectly.
  *
- * <p>Nothing in the BUILD tab or the RESEARCH page is backed by a proper view-model class. The
- * research rows and the BUILD tab's single detail row are each a fresh anonymous {@link
- * ItemRow.Model} inner class, closing over a loop variable ({@code t}) or over {@code this}
- * directly, plus this class's mutable fields ({@code selected}, {@code demolishing}, {@code
- * toggling}). The BUILD tab's per-machine tiles and its two tool tiles go one step further and
- * skip {@link ItemRow} entirely — see {@link MachineIcon} and {@link ToolIcon} — since a whole
- * grid of them needs to stay small. This is all functional-callback-style UI wiring: every
- * row/tile is just a bundle of closures re-evaluated on every repaint, so there is nothing to
- * keep in sync — they always read current engine state.
+ * <p>Nothing in the BUILD tab is backed by a proper view-model class: its per-machine tiles, its
+ * two tool tiles and its detail card ({@link MachineIcon}, {@link ToolIcon}, {@link
+ * MachineDetail}) each read {@code engine} and this class's mutable fields ({@code selected},
+ * {@code demolishing}, {@code toggling}) directly as they paint, wired up with closures rather
+ * than with view models that would then have to be kept in sync. The RESEARCH page does the same
+ * one level out: {@link TechTree} takes the whole {@link Engine} and derives every tile's state
+ * from it on each repaint. Everything here is that kind of functional-callback wiring — a bundle
+ * of closures re-evaluated on every repaint, so nothing can go stale.
  */
 public final class Game implements BoardPanel.Handler {
 
@@ -103,16 +99,14 @@ public final class Game implements BoardPanel.Handler {
     /** Fixed inner padding and content width shared by every tab page. */
     static final int TAB_PAD = 12, TAB_CONTENT_W = SIDE_W - TAB_PAD * 2;
     /**
-     * RESEARCH page geometry, now that the page is as wide as the main panel instead of the side
-     * panel: how many columns of {@link ItemRow}s to lay the techs out in, the gap between them,
-     * the page's usable width, and the width one row therefore gets. {@link #RESEARCH_VIEW_W}
-     * stops 10px short of {@link #LEFT_W} because {@link Ui#scroll}'s vertical scrollbar reserves
-     * 9px of it — see {@link #positionTechRows()} for what claiming the full width would summon.
+     * Width the RESEARCH page lays itself out within. Stops 10px short of {@link #LEFT_W} because
+     * {@link Ui#scroll}'s vertical scrollbar reserves 9px of it, and a page that claimed the full
+     * width — wider than the viewport left for it — would make {@link javax.swing.JScrollPane}
+     * decide it ALSO needs a horizontal scrollbar to pan across that sliver, a second, unwanted
+     * scrollbar for content never meant to scroll sideways. {@link TechTree} sizes its tiles down
+     * to fit whatever it is given.
      */
-    private static final int RESEARCH_COLS = 2, RESEARCH_GAP = 8;
     private static final int RESEARCH_VIEW_W = LEFT_W - 10;
-    private static final int RESEARCH_COL_W =
-            (RESEARCH_VIEW_W - TAB_PAD * 2 - RESEARCH_GAP * (RESEARCH_COLS - 1)) / RESEARCH_COLS;
     /**
      * Fixed height for the rotating hint box. {@link #hintText()}'s longest tip wraps to about
      * five lines at {@link #TAB_CONTENT_W}; this is sized to comfortably fit that, with slack
@@ -158,23 +152,12 @@ public final class Game implements BoardPanel.Handler {
      * everything below the grid (the "Details" label and card) every time a tech completes.
      */
     private final List<MachineIcon> machineIcons = new ArrayList<>();
-    /** Research rows keyed by tech, read by {@link #positionTechRows()} to look up each row's current height. */
-    private final Map<Tech, ItemRow> techRows = new EnumMap<>(Tech.class);
     /**
-     * The RESEARCH tab's scrollable content panel (null layout, positioned by {@link
-     * #positionTechRows()}), kept as a field so {@link #refresh()} and {@link #abandon()} can
-     * call that method again — a full recompute is simpler and more robust than trying to move
-     * just the one row that changed (see {@link #positionTechRows()}'s Javadoc).
+     * The RESEARCH page: the tech tree, drawn as a tree. Owns its own layout and hit-testing (see
+     * {@link TechTree}) and reports clicks and hovers back here through the handler wired up in
+     * this class's constructor.
      */
-    private JPanel researchContent;
-    /**
-     * Headings above the two blocks of the RESEARCH page. Both span the full page width across
-     * the columns beneath them, and both are hidden when their block is empty — "Available" once
-     * the whole tree is researched, "Completed" until the first tech lands. Positioned by {@link
-     * #positionTechRows()} along with the rows themselves.
-     */
-    private final SectionLabel availableLabel = new SectionLabel("Available");
-    private final SectionLabel finishedLabel = new SectionLabel("Completed");
+    private final TechTree techTree;
     /** The in-game manual/log panel shown under the MANUAL tab. */
     private final Manual manual;
 
@@ -192,13 +175,19 @@ public final class Game implements BoardPanel.Handler {
     /** Builds all side panels and wires them to {@code engine}; does not lay out or start ticking yet. */
     public Game(Engine engine) {
         this.engine = engine;
-        ItemRow.stock = engine.board;
         this.boardPanel = new BoardPanel(engine, this);
         this.ledger = new LedgerPanel(engine);
         this.status = new StatusBar();
         this.hint = new HintBox();
         this.detail = new MachineDetail();
         this.manual = new Manual(engine);
+        this.techTree = new TechTree(engine, RESEARCH_VIEW_W, new TechTree.Handler() {
+            @Override public void researched(Tech t) { research(t); }
+            // Only ever called with a tile under the pointer, never with null: moving off a tile
+            // onto the page background leaves the last readout standing rather than blanking the
+            // status bar, exactly like moving the pointer off the board does.
+            @Override public void hovered(Tech t) { status.set(inspect(t)); }
+        });
     }
 
     /* ------------------------------------------------------------------ */
@@ -414,7 +403,7 @@ public final class Game implements BoardPanel.Handler {
         panel.add(toolsLabel);
         y += 20;
 
-        // Dismantle and Power Switch used to be full-width ItemRows with their own title/cost/
+        // Dismantle and Power Switch used to be full-width list rows with their own title/cost/
         // blurb text; that's a lot of vertical space for two toggles with no per-machine detail
         // to show. As ToolIcon tiles their description moves to a hover tooltip instead — see
         // ToolIcon's Javadoc for why that trade (discoverable on hover, invisible otherwise) was
@@ -527,141 +516,20 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the RESEARCH page of the main panel: the "Available"/"Completed" headings and one
-     * {@link ItemRow} per {@link Tech}, all in a null-layout content panel positioned by {@link
-     * #positionTechRows()} and wrapped in a fixed-size {@link Ui#scroll}. Two columns of rows
-     * (see {@link #RESEARCH_COLS}) get most of the tree on screen at once, but "most" isn't
-     * "all", so the scrollbar stays — unlike BUILD's ~22 items, which are known in advance to fit.
+     * Builds the RESEARCH page of the main panel: the {@link TechTree}, wrapped in a fixed-size
+     * {@link Ui#scroll}. Nine tiers of tiles don't fit the panel's height the way BUILD's ~22
+     * items fit the side panel, so the scrollbar stays.
      *
-     * <p>Same functional-callback-style wiring as {@link #buildTab()}: each row gets a fresh
-     * anonymous {@link ItemRow.Model} closing over the loop variable {@code t} and {@code
-     * engine}. Row positions themselves are computed by {@link #positionTechRows()}, not here —
-     * this method only builds the rows and hands them off.
+     * <p>Unlike every other page here, this one builds nothing: {@link TechTree} lays itself out
+     * from the prerequisite DAG in its own constructor (called from this class's constructor) and
+     * paints all 28 tiles and 26 traces as a single component, so there is nothing for this
+     * method to position. It used to assemble one list row per tech and place them in columns,
+     * which is what the tree replaced.
      *
      * @return the scrollable RESEARCH page body
      */
     private JComponent techPage() {
-        researchContent = new JPanel(null);
-        researchContent.setOpaque(false);
-
-        for (Tech t : Tech.values()) {
-            var row = new ItemRow(RESEARCH_COL_W, new ItemRow.Model() {
-                public String title() { return t.label; }
-                public String meta()  {
-                    if (engine.board.has(t)) return "done";
-                    var missing = t.requires().stream().filter(r -> !engine.board.has(r)).map(r -> r.label).toList();
-                    return missing.isEmpty() ? "" : "needs " + String.join(", ", missing);
-                }
-                public Map<Res, Double> cost() { return t.cost; }
-                public String io()    { return t.blurb; }
-                public String blurb() { return ""; }
-                public boolean affordable() { return engine.researchable(t) && engine.affordable(t.cost); }
-                public boolean selected()   { return false; }
-                public boolean done()       { return engine.board.has(t); }
-            }, () -> {
-                if (engine.research(t)) {
-                    status.set(List.of(Ui.Seg.of("Research complete - ", Theme.DIM), Ui.Seg.of(t.label, Theme.GOOD)));
-                    refresh();
-                }
-            });
-            techRows.put(t, row);
-            researchContent.add(row);
-        }
-        researchContent.add(availableLabel);
-        researchContent.add(finishedLabel);
-        positionTechRows();
-
-        return Ui.scroll(researchContent);
-    }
-
-    /**
-     * Positions the whole research page from scratch: the {@link #availableLabel} heading and
-     * every not-yet-researched tech under it, then — if anything is done yet — the {@link
-     * #finishedLabel} heading and every researched tech under that. Each block's rows are dealt
-     * across {@link #RESEARCH_COLS} columns by {@link #placeTechRow}; each row's height comes
-     * from its own {@link ItemRow#getPreferredSize()}, and the cursors are plain {@code int}s in
-     * an array, not a {@link LayoutManager}.
-     *
-     * <p>The two headings span the full page width across the columns beneath them, and each
-     * block starts both columns level again below its heading, so a completed tech can never
-     * appear alongside an available one — the blocks stay visually separate even though the
-     * columns within them are packed independently.
-     *
-     * <p>Called once from {@link #techPage()}, then again from {@link #refresh()} (liberally —
-     * see there for why that's cheap enough) and {@link #abandon()} whenever a tech's done state
-     * might have changed. Recomputing every row's position from scratch, rather than moving just
-     * the one row that changed the way an earlier {@link BoxLayout}-based version did, is both
-     * simpler and immune to that version's ordering bug after {@link #abandon()} wiped every tech
-     * back to unresearched at once.
-     *
-     * <p>Finishes by setting {@link #researchContent}'s preferred size to the true content
-     * height and revalidating it — the one piece of bookkeeping a scrollable, statically
-     * positioned panel still needs, so the scrollbar knows how far there is to pan. That's
-     * scoped to this one panel's scroll extent, not a {@link LayoutManager} repositioning
-     * siblings, which is the dynamism this class avoids.
-     */
-    private void positionTechRows() {
-        boolean anyOpen = false, anyDone = false;
-        for (Tech t : Tech.values()) {
-            if (engine.board.has(t)) anyDone = true; else anyOpen = true;
-        }
-
-        int[] colY = new int[RESEARCH_COLS];
-        int y = TAB_PAD;
-        int headingW = RESEARCH_VIEW_W - TAB_PAD * 2;
-
-        availableLabel.setVisible(anyOpen);
-        if (anyOpen) {
-            availableLabel.setBounds(TAB_PAD, y, headingW, 20);
-            Arrays.fill(colY, y + 24);
-            for (Tech t : Tech.values()) if (!engine.board.has(t)) placeTechRow(techRows.get(t), colY);
-            y = deepest(colY);
-        }
-        finishedLabel.setVisible(anyDone);
-        if (anyDone) {
-            finishedLabel.setBounds(TAB_PAD, y, headingW, 20);
-            Arrays.fill(colY, y + 24);
-            for (Tech t : Tech.values()) if (engine.board.has(t)) placeTechRow(techRows.get(t), colY);
-            y = deepest(colY);
-        }
-        // RESEARCH_VIEW_W, not LEFT_W: Ui.scroll's vertical scrollbar reserves 9px of the
-        // panel's width, and a preferred width that claims the full LEFT_W (wider than the
-        // viewport that leaves for it) makes JScrollPane decide it ALSO needs a horizontal
-        // scrollbar to pan across that extra sliver — a second, unwanted scrollbar for content
-        // that was never actually meant to scroll sideways.
-        researchContent.setPreferredSize(new Dimension(RESEARCH_VIEW_W, y + 10));
-        researchContent.revalidate();
-    }
-
-    /**
-     * Places one research row into whichever column currently reaches least far down (leftmost on
-     * a tie) and advances that column's cursor past it.
-     *
-     * <p>Packing by shortest column rather than dealing strictly left-right-left matters because
-     * rows aren't a uniform height — a tech whose prerequisites are listed and whose blurb wraps
-     * to three lines is noticeably taller than one that fits on one — so fixed alternation would
-     * leave one column trailing the other by a growing margin. Filling the shorter column keeps
-     * the two within one row's height of each other and still reads top-to-bottom, left-to-right
-     * for the common case of similarly-sized neighbours. Declaration order is preserved in the
-     * sense that matters here: an earlier tech is never placed below a later one in the same
-     * column.
-     *
-     * @param row  the row to place
-     * @param colY per-column {@code y} cursors, mutated in place
-     */
-    private static void placeTechRow(ItemRow row, int[] colY) {
-        int col = 0;
-        for (int i = 1; i < colY.length; i++) if (colY[i] < colY[col]) col = i;
-        int h = row.getPreferredSize().height;
-        row.setBounds(TAB_PAD + col * (RESEARCH_COL_W + RESEARCH_GAP), colY[col], RESEARCH_COL_W, h);
-        colY[col] += h + 5;
-    }
-
-    /** The lowest point any column has reached, i.e. where the block below it has to start. */
-    private static int deepest(int[] colY) {
-        int y = colY[0];
-        for (int v : colY) y = Math.max(y, v);
-        return y;
+        return Ui.scroll(techTree);
     }
 
     /* ------------------------------------------------------------------ */
@@ -688,24 +556,19 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Re-syncs all UI surfaces with current engine state: updates the hint text, repositions the
-     * RESEARCH page's rows in case a tech's done state just changed, shows/hides BUILD tab
-     * machine icons per {@link #updateMachineIconVisibility()}, and repaints the ledger, every
-     * tab body in both decks, and the manual. Called after every player action and on a timer from
+     * Re-syncs all UI surfaces with current engine state: updates the hint text, shows/hides
+     * BUILD tab machine icons per {@link #updateMachineIconVisibility()}, and repaints the
+     * ledger, every tab body in both decks (the tech tree among them, which reads every tile's
+     * state live from the engine as it paints), and the manual. Called after every player action and on a timer from
      * {@link #start()}.
      *
-     * <p>Nothing here calls {@code revalidate()} on anything other than {@link
-     * #researchContent} (inside {@link #positionTechRows()}): every other component's bounds
-     * were fixed once at construction and never need to change again, so a plain {@code
-     * repaint()} is enough to bring it up to date with current engine state — see the class
-     * Javadoc. {@link #positionTechRows()} itself is called unconditionally rather than only
-     * when a tech's done-state actually flipped: it's cheap (26 {@link ItemRow#getPreferredSize}
-     * calls, pure text measurement, no painting) and unconditional is simpler than tracking
-     * "did anything change" separately.
+     * <p>Nothing here calls {@code revalidate()} on anything at all: every component's bounds,
+     * the tech tree's tile positions included, were fixed once at construction and never need to
+     * change again, so a plain {@code repaint()} is enough to bring any of them up to date with
+     * current engine state — see the class Javadoc.
      */
     public void refresh() {
         hint.text = hintText();
-        positionTechRows();
         updateMachineIconVisibility();
         ledger.repaint();
         for (JComponent p : mainTabs.panels.values()) p.repaint();
@@ -1038,6 +901,70 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /* ------------------------------------------------------------------ */
+    /* research callbacks                                                  */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * {@link TechTree.Handler} callback for a click on a tech tile: buys {@code t} if the site
+     * can, and says why not in the status bar if it can't. The tree hit-tests the click and hands
+     * the tech straight over without judging whether it's purchasable — every tile is clickable,
+     * including the greyed-out ones — so this is the single place that decides, and the one place
+     * that turns a refused purchase into an explanation rather than a click that does nothing.
+     *
+     * @param t the tech whose tile was clicked
+     */
+    private void research(Tech t) {
+        if (engine.board.has(t)) {
+            status.set(List.of(Ui.Seg.of(t.label, Theme.CHALK), Ui.Seg.of(" is already researched.", Theme.DIM)));
+            return;
+        }
+        if (engine.research(t)) {
+            status.set(List.of(Ui.Seg.of("Research complete - ", Theme.DIM), Ui.Seg.of(t.label, Theme.GOOD)));
+            refresh();
+            return;
+        }
+        var missing = t.requires().stream().filter(r -> !engine.board.has(r)).map(r -> r.label).toList();
+        status.set(missing.isEmpty()
+                ? List.of(Ui.Seg.of(t.label, Theme.CHALK), Ui.Seg.of(" - not enough in stock yet.", Theme.DIM))
+                : List.of(Ui.Seg.of(t.label, Theme.CHALK),
+                          Ui.Seg.of(" needs ", Theme.DIM),
+                          Ui.Seg.of(String.join(", ", missing), Theme.AMBER),
+                          Ui.Seg.of(" first.", Theme.DIM)));
+    }
+
+    /**
+     * Builds the status-bar readout for a hovered tech tile: name, then either "researched" or
+     * the price with each resource colored by whether the site actually has it, then what the
+     * tech does, then whatever prerequisites are still missing. The research-tree counterpart to
+     * {@link #inspect(Group)}, and the place the tile's own cramped caption defers to — the tile
+     * shows an icon, a name and a price, and everything else is one hover away.
+     *
+     * @param t the hovered tech
+     * @return styled segments for {@link StatusBar#set}
+     */
+    private List<Ui.Seg> inspect(Tech t) {
+        var out = new ArrayList<Ui.Seg>();
+        out.add(Ui.Seg.of(t.label, Theme.CHALK));
+        if (engine.board.has(t)) {
+            out.add(Ui.Seg.of("  researched", Theme.GOOD));
+        } else {
+            out.add(Ui.Seg.of("  ", Theme.DIM));
+            boolean first = true;
+            for (var e : t.cost.entrySet()) {
+                if (!first) out.add(Ui.Seg.of(" \u00b7 ", Theme.DIM));
+                first = false;
+                boolean have = engine.board.get(e.getKey()) >= e.getValue() - 1e-9;
+                out.add(Ui.Seg.of(Fmt.n(e.getValue()) + " " + e.getKey().lower(),
+                        have ? Theme.alpha(Theme.CHALK, 200) : Theme.HOT));
+            }
+        }
+        out.add(Ui.Seg.of("  " + t.blurb, Theme.ICE));
+        var missing = t.requires().stream().filter(r -> !engine.board.has(r)).map(r -> r.label).toList();
+        if (!missing.isEmpty()) out.add(Ui.Seg.of("  needs " + String.join(", ", missing), Theme.AMBER));
+        return out;
+    }
+
+    /* ------------------------------------------------------------------ */
     /* copy                                                                */
     /* ------------------------------------------------------------------ */
 
@@ -1165,7 +1092,7 @@ public final class Game implements BoardPanel.Handler {
      * machine — no owned-count badge, and the icon is a small hand-drawn glyph (passed in as
      * {@code glyph}) instead of an {@link Art} preview, since there's no machine to render.
      *
-     * <p>Dismantle and Power Switch used to be full-width {@link ItemRow}s with their own
+     * <p>Dismantle and Power Switch used to be full-width list rows with their own
      * title/cost/blurb text. As a tile there's no room left for that description, so it moves to
      * a hover tooltip (set by the caller via {@link #setToolTipText}) instead of a permanent
      * on-screen line — a deliberate trade of "always visible" for "small," acceptable here
@@ -1191,7 +1118,7 @@ public final class Game implements BoardPanel.Handler {
             addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
                 @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
-                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                // mousePressed, not mouseClicked: see TechTree's mousePressed for why.
                 @Override public void mousePressed(java.awt.event.MouseEvent e) { onClick.run(); }
             });
         }
@@ -1295,7 +1222,7 @@ public final class Game implements BoardPanel.Handler {
             addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
                 @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
-                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                // mousePressed, not mouseClicked: see TechTree's mousePressed for why.
                 @Override public void mousePressed(java.awt.event.MouseEvent e) { pickMachine(machine); }
             });
         }
@@ -1348,8 +1275,9 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Builds a synthetic, always-on 1x1 {@link Group} purely for catalogue rendering — shared by
-     * {@link MachineIcon} and {@link MachineDetail} so a machine's tile icon and its detail-card
-     * icon are pixel-identical. {@code powered} is forced {@code true} so {@link Art#paint}
+     * {@link MachineIcon}, {@link MachineDetail} and {@link TechTree} (for the tiles of techs
+     * that unlock a machine) so a machine's build tile, its detail card and its research tile are
+     * all pixel-identical. {@code powered} is forced {@code true} so {@link Art#paint}
      * never applies its "dead machine" hazard overlay, which is about simulation state, not
      * about whether the machine is locked or affordable (each caller dims those separately).
      * Ore-only machines get a representative {@link Res#IRON_ORE} so their ore-colored details
@@ -1357,7 +1285,7 @@ public final class Game implements BoardPanel.Handler {
      *
      * @param m the machine to preview
      */
-    private static Group previewGroup(Machine m) {
+    static Group previewGroup(Machine m) {
         Res ore = m.spec().oreOnly() ? Res.IRON_ORE : null;
         var g = new Group(0, m, 0, 0, 1, 1, new int[]{0}, ore, 1, true);
         g.powered = true;
@@ -1401,8 +1329,8 @@ public final class Game implements BoardPanel.Handler {
     /**
      * The BUILD tab's detail card: a large preview icon beside the full title, cost, and
      * description of whichever machine is currently {@link #selected} — replacing the old
-     * single {@link ItemRow} used here, which was sized like every other compact list row and
-     * read as cramped now that it's the one and only detail slot rather than one of twenty.
+     * single compact list row used here, which was sized like every other row in the panel and
+     * read as cramped once it was the one and only detail slot rather than one of twenty.
      *
      * <p>Reads {@code selected} straight off the enclosing {@link Game} instance on every
      * repaint, the same functional-callback-style wiring as {@link MachineIcon} — there's no
@@ -1453,8 +1381,8 @@ public final class Game implements BoardPanel.Handler {
          * {@link #paintUnaffordable} the same way {@link MachineIcon} is when unaffordable, since
          * {@code selected} is only ever an unlocked machine (its icon is hidden while locked, so
          * there's no click path to select one — see {@link #updateMachineIconVisibility()}) —
-         * plus title, meta, cost (color-coded by what's in stock, same convention {@link ItemRow}
-         * uses), and the wrapped {@link #describe} and blurb text.
+         * plus title, meta, cost (color-coded by what's in stock, the same convention {@link
+         * TechTree} uses for a tech's price), and the wrapped {@link #describe} and blurb text.
          */
         @Override protected void paintComponent(Graphics graphics) {
             var g = (Graphics2D) graphics;
@@ -1501,9 +1429,9 @@ public final class Game implements BoardPanel.Handler {
             g.setColor(Theme.DIM);
             g.drawString(meta, tx, y);
 
-            // One resource per line, not joined inline with " · " like ItemRow's compact list
-            // rows do: this card's text column is narrower (the icon takes some of the width
-            // ItemRow gets to use), and a 3+ resource cost (e.g. the Quantum Replicator's
+            // One resource per line, not joined inline with " · " the way the compact rows this
+            // card replaced did: its text column is narrower (the icon eats into the width they
+            // had), and a 3+ resource cost (e.g. the Quantum Replicator's
             // matter/titanium/circuit) silently overflowed past the component's edge and got
             // clipped when it was joined onto one line.
             for (var e : engine.priceOf(m).entrySet()) {
@@ -1589,7 +1517,7 @@ public final class Game implements BoardPanel.Handler {
             this.label = label;
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new java.awt.event.MouseAdapter() {
-                // mousePressed, not mouseClicked: see ItemRow's mousePressed for why.
+                // mousePressed, not mouseClicked: see TechTree's mousePressed for why.
                 @Override public void mousePressed(java.awt.event.MouseEvent e) { onClick.run(); }
             });
         }
