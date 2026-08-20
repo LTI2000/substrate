@@ -36,12 +36,15 @@ an oversight.
   4 resources).
   (`src/main/java/substrate/Cost.java:10-34`)
 
-- **Prerequisite table forced out of the enum by a language limitation** — the
-  class comment says it outright: "Prerequisites live in a table because an
-  enum constant cannot reference its siblings from its own constructor." So
-  the 26-tech dependency DAG lives in a static `EnumMap<Tech, Set<Tech>>`
-  built in a static initializer, separate from the constants it governs.
-  (`src/main/java/substrate/Tech.java:8-9, 50-78`)
+- **Prerequisites smuggled past a language limitation with a lambda** — an
+  enum constant's arguments may not name a sibling constant, so a tech cannot
+  simply be declared `TOOLS1(..., TOOLS0)`. Each one instead passes a
+  `Supplier<Set<Tech>>` — `() -> EnumSet.of(TOOLS0, SMELTING)` — whose body is
+  only evaluated later, by a static initializer that drains all 26 of them the
+  moment every constant is live and writes the results into a plain field. The
+  dependency DAG gets to live on the constants it governs; the deferral leaves
+  no trace at runtime.
+  (`src/main/java/substrate/Tech.java:12-23, 88-131`)
 
 ## Odd algorithms
 
