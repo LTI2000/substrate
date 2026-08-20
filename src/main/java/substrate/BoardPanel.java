@@ -84,6 +84,7 @@ public final class BoardPanel extends JComponent {
         };
         addMouseListener(mouse);
         addMouseMotionListener(mouse);
+        updateCursor();
     }
 
     /** Arms placement preview for {@code m}; {@code null} clears it. Triggers a repaint. */
@@ -94,16 +95,18 @@ public final class BoardPanel extends JComponent {
     public void setToggling(boolean on)        { toggling = on; updateCursor(); repaint(); }
 
     /**
-     * Sets the pointer to match whichever board tool is active: a crosshair while demolishing
-     * (aiming at a block to remove), a hand while power-toggling (clicking a switch), or the
-     * plain arrow otherwise — including while a machine is armed for placement, which gets no
-     * special cursor of its own since the ghost-square preview under the pointer already marks
-     * where it would land. Called from {@link #setDemolishing} and {@link #setToggling}, the
-     * only two places {@code demolishing}/{@code toggling} ever change.
+     * Sets the pointer to match whichever board tool is active, using the custom-drawn {@link
+     * Cursors} glyphs rather than a plain OS cursor: a red targeting reticle while demolishing
+     * (aiming at a block to remove), the PWR tool's broken-ring glyph while power-toggling
+     * (clicking a switch), or a plain amber crosshair otherwise — including while a machine is
+     * armed for placement, which gets no cursor of its own beyond that default crosshair, since
+     * the ghost-square preview under the pointer already marks where it would land. Called from
+     * the constructor (so the board never shows a bare OS arrow) and from {@link #setDemolishing}
+     * and {@link #setToggling}, the only two places {@code demolishing}/{@code toggling} change
+     * after that.
      */
     private void updateCursor() {
-        int id = demolishing ? Cursor.CROSSHAIR_CURSOR : toggling ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR;
-        setCursor(Cursor.getPredefinedCursor(id));
+        setCursor(demolishing ? Cursors.DEMOLISH : toggling ? Cursors.TOGGLE : Cursors.POINT);
     }
     /** Seconds elapsed since this panel was constructed; the shared clock every animation is timed against. */
     public double clock()                      { return (System.nanoTime() - start) / 1e9; }

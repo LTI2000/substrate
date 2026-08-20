@@ -27,6 +27,16 @@ public final class Art {
     private Art() {}
 
     /**
+     * Shared flame/glow colors for anything that smelts iron or copper, so a metal's
+     * high-throughput furnace ({@link #blast}/{@link #induction}) burns the exact same color as
+     * its basic counterpart ({@link #furnace}) rather than an independently-picked near-miss.
+     * Iron smelts at a far higher temperature than copper, hence the blue-white glow versus
+     * copper's warm orange — see the {@code FE}/{@code CU} cases in {@link #paint} for where
+     * that distinction is drawn.
+     */
+    private static final Color IRON_GLOW = new Color(0x57, 0xAA, 0xFF), COPPER_GLOW = new Color(0xFF, 0x7C, 0x2C);
+
+    /**
      * Entry point: paints one machine group into {@code r}. Draws the shared shadow and pad,
      * dispatches to the machine-specific drawing method for {@code grp.type}, then layers on
      * the shared fusion seams, dead/unpowered overlay, and hover outline. All drawing is
@@ -81,9 +91,10 @@ public final class Art {
             case COND     -> condenser(g, x, y, w, h, u, tt);
             // Iron burns blue-hot (it smelts at a far higher temperature than copper), copper a
             // rich orange — distinct flame colors so the two furnaces read apart at a glance
-            // even though they share the same brick-shell silhouette.
-            case FE       -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, new Color(0x57, 0xAA, 0xFF));
-            case CU       -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), new Color(0xFF, 0x7C, 0x2C));
+            // even though they share the same brick-shell silhouette. BLAST/INDUCT are these
+            // same two metals at a higher tier, so they reuse the identical glow colors.
+            case FE       -> furnace(g, x, y, w, h, u, tt, seed, Theme.BRICK, IRON_GLOW);
+            case CU       -> furnace(g, x, y, w, h, u, tt, seed, Theme.shade(Theme.BRICK, 1.1), COPPER_GLOW);
             case BURNER   -> burner(g, x, y, w, h, u, tt, seed);
             case ARM      -> arm(g, x, y, w, h, u, tt);
             case ASM      -> assembler(g, x, y, w, h, u, tt);
@@ -91,8 +102,8 @@ public final class Art {
             case CAP      -> capacitors(g, x, y, w, h, u, tt, level);
             case LAB      -> lab(g, x, y, w, h, u, tt);
             case AMP      -> node(g, x, y, w, h, u, tt);
-            case BLAST    -> blast(g, x, y, w, h, u, tt, seed);
-            case INDUCT   -> induction(g, x, y, w, h, u, tt);
+            case BLAST    -> blast(g, x, y, w, h, u, tt, seed, IRON_GLOW);
+            case INDUCT   -> induction(g, x, y, w, h, u, tt, COPPER_GLOW);
             case REFINE   -> refinery(g, x, y, w, h, u, tt, seed);
             case REACTOR  -> reactor(g, x, y, w, h, u, tt, seed);
             case REP      -> replicator(g, x, y, w, h, u, tt);
@@ -1091,8 +1102,10 @@ public final class Art {
      * top, and an occasional tap-hole drip that grows across a slow cycle before resetting.
      *
      * @param seed per-group seed, passed to {@link #flicker} and {@link #smoke} for desync
+     * @param glow color of the hearth glow and tap-hole drip — the same metal-specific color
+     *             {@link #furnace} uses, so BLAST always matches FE's blue-hot iron
      */
-    private static void blast(Graphics2D g, double x, double y, double w, double h, double u, double t, int seed) {
+    private static void blast(Graphics2D g, double x, double y, double w, double h, double u, double t, int seed, Color glow) {
         double cx = x + w / 2;
         double bTop = y + 5 * u, bBot = y + h - 4 * u;
         double topW = w * 0.42, botW = w * 0.72;
@@ -1115,14 +1128,14 @@ public final class Art {
             g.fill(new Rectangle2D.Double(cx + botW / 2 - 0.5 * u, ty, 3 * u, 1.8 * u));
         }
         double f = flicker(t, seed);
-        glow(g, cx, bBot - 2 * u, botW * 0.5 * (0.9 + 0.2 * f), Theme.EMBER, (int) (190 * f));
-        g.setColor(Theme.mix(Theme.EMBER, Color.WHITE, 0.3 * f));
+        glow(g, cx, bBot - 2 * u, botW * 0.5 * (0.9 + 0.2 * f), glow, (int) (190 * f));
+        g.setColor(Theme.mix(glow, Color.WHITE, 0.3 * f));
         g.fill(new Rectangle2D.Double(cx - botW * 0.3, bBot - 3 * u, botW * 0.6, 2.4 * u));
         // charging skip and stack
         box(g, cx - topW / 2 - u, y + 2 * u, topW + 2 * u, 3.5 * u, Theme.STEEL_DARK, 1);
         smoke(g, cx, y + 2 * u, u, t, seed, 4, new Color(170, 178, 188));
         double p = frac(t * 0.3);
-        g.setColor(Theme.alpha(Theme.EMBER, (int) (150 * (1 - p))));
+        g.setColor(Theme.alpha(glow, (int) (150 * (1 - p))));
         g.setStroke(new BasicStroke((float) Math.max(1, 1.4 * u)));
         g.draw(new Line2D.Double(cx + botW / 2, bBot - 2 * u, cx + botW / 2 + 4 * u * p, bBot + u * p));
     }
@@ -1131,8 +1144,11 @@ public final class Art {
      * Induction furnace: a glowing molten pool inside a dark crucible, encircled by four copper
      * coil loops drawn at different flattenings (each scaled by {@code cos} of a rotating
      * phase) so they appear to orbit the pool in 3D despite being drawn on a flat 2D canvas.
+     *
+     * @param glow color of the molten pool — the same metal-specific color {@link #furnace}
+     *             uses, so INDUCT always matches CU's warm-orange copper
      */
-    private static void induction(Graphics2D g, double x, double y, double w, double h, double u, double t) {
+    private static void induction(Graphics2D g, double x, double y, double w, double h, double u, double t, Color glow) {
         double cx = x + w / 2, cy = y + h / 2;
         double cw = w * 0.5, ch = h * 0.5;
         box(g, x + 2.5 * u, y + 2.5 * u, w - 5 * u, h - 5 * u, Theme.shade(Theme.STEEL, 0.7), 2);
@@ -1140,8 +1156,8 @@ public final class Art {
         g.setColor(new Color(0x20, 0x1A, 0x16));
         g.fill(new Ellipse2D.Double(cx - cw / 2, cy - ch / 2, cw, ch));
         double pulse = 0.6 + 0.4 * Math.sin(t * 2.4);
-        glow(g, cx, cy, cw * 0.55 * (0.9 + 0.2 * pulse), new Color(0xFF, 0xA8, 0x55), (int) (190 * pulse));
-        g.setColor(Theme.mix(new Color(0xFF, 0xA8, 0x55), Color.WHITE, 0.3 * pulse));
+        glow(g, cx, cy, cw * 0.55 * (0.9 + 0.2 * pulse), glow, (int) (190 * pulse));
+        g.setColor(Theme.mix(glow, Color.WHITE, 0.3 * pulse));
         g.fill(new Ellipse2D.Double(cx - cw * 0.34, cy - ch * 0.34, cw * 0.68, ch * 0.68));
         // copper coils rotating around it
         g.setStroke(new BasicStroke((float) Math.max(1.2, 1.6 * u), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
