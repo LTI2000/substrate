@@ -2,6 +2,7 @@ package substrate;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -142,10 +143,16 @@ public final class Engine {
      * rather than cached — each unit built inflates the price of the next by 14%, so the
      * cost is a pure function of {@link Board#count(Machine)} and there is nothing to
      * invalidate.
+     *
+     * <p>A {@link LinkedHashMap}, not an {@link EnumMap}, so the scaled price still iterates in
+     * the order the machine's cost was written in {@link Machine} — see {@link Cost} for why that
+     * order is worth keeping. An {@code EnumMap} silently re-sorted every build price into {@link
+     * Res} declaration order, which put the same price on screen in a different order here than
+     * in the research tree.
      */
     public Map<Res, Double> priceOf(Machine m) {
         double f = Math.pow(1.14, board.count(m));
-        var out = new EnumMap<Res, Double>(Res.class);
+        var out = new LinkedHashMap<Res, Double>();
         m.spec().cost().forEach((r, v) -> out.put(r, v * f));
         return out;
     }

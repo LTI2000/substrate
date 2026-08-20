@@ -72,6 +72,7 @@ src/main/java/substrate/
 src/test/java/substrate/
   FusionTest, EngineTest, SessionTest    35 assertions over the rules
   TechTreeTest                           the research tree's layout holds together
+  CostTest                               prices iterate in the order they're written
   ArtTest                                paints offscreen and checks things move
   TestSite, RenderTool                   fixtures, plus a PNG dump for headless review
 ```
