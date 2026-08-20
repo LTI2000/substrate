@@ -33,8 +33,12 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 
 ## Playing
 
+- The main panel has two tabs: MAP is the site itself, RESEARCH is the tech tree, two columns
+  of it. The panel on the right stays put across both, so you can shop the build palette or read
+  the manual while either view is up.
 - Click the core (or press space) to condense matter by hand.
-- Build from the panel on the right; with the dismantle tool armed, click a placed machine to
+- Build from the panel on the right; arming a machine or a tool switches the main panel back to
+  MAP so you have somewhere to click. With the dismantle tool armed, click a placed machine to
   remove the whole fused block, or shift-click to take out only the single cell under the cursor.
   Either way the refund is half.
 - Clicking an already-armed machine in the build panel keeps it armed — it does not deselect. Press
@@ -62,6 +66,7 @@ src/main/java/substrate/
   Machine, Spec, Role, Res, Tech, Cost   the catalogue, as data
   Art                                    every machine, drawn and animated
   Game, BoardPanel, LedgerPanel, ...     the Swing front end
+                                         (Game: MAP/RESEARCH main tabs, BUILD/MANUAL side tabs)
   Save, Main                             persistence and the entry point
 src/test/java/substrate/
   FusionTest, EngineTest, SessionTest    30 assertions over the rules

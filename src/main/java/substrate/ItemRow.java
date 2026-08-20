@@ -15,7 +15,11 @@ public final class ItemRow extends JComponent {
     public interface Model {
         /** Display name of the item. */
         String title();
-        /** Right-aligned status text (e.g. owned count), or blank/null if none. */
+        /**
+         * Status text (e.g. owned count, or the prerequisites still missing), or blank/null if
+         * none. Drawn right-aligned beside the title when it fits there, on its own line
+         * underneath when it doesn't — see {@link ItemRow#metaOnOwnLine()}.
+         */
         String meta();
         /** Resource cost to acquire the item, empty if free or already {@link #done()}. */
         Map<Res, Double> cost();
@@ -34,20 +38,28 @@ public final class ItemRow extends JComponent {
     private static final Font TITLE = Theme.mono(12);
     private static final Font SMALL = Theme.mono(10);
     /**
-     * Fixed row width, matching the side panel tabs' fixed content width ({@code
-     * Game.TAB_CONTENT_W}). There is no {@link javax.swing.LayoutManager} anywhere in this UI —
-     * every component gets an explicit {@code setBounds} call computed once, rather than a
-     * container reflowing children off their preferred sizes — so a row's width is this
-     * constant, not something read live off a dynamically-sized parent.
+     * This row's fixed width, handed in at construction (currently {@code Game.RESEARCH_COL_W},
+     * one column of the research page). There is no {@link javax.swing.LayoutManager} anywhere in
+     * this UI — every component gets an explicit {@code setBounds} call computed once, rather
+     * than a container reflowing children off their preferred sizes — so a row is told its width
+     * up front and reports it straight back out through {@link #getPreferredSize()}, rather than
+     * reading it live off a dynamically-sized parent. This was a hardcoded 330 while the only
+     * caller was the fixed-width side panel; it became a field when the research list moved to
+     * the main panel and got laid out in columns whose width derives from the window geometry.
      */
-    private static final int WIDTH = 330;
+    private final int width;
 
     private final Model model;
     /** Whether the mouse is currently over the row; drives the hover highlight. */
     private boolean hover;
 
-    /** @param onClick invoked when the row is clicked, regardless of affordability */
-    public ItemRow(Model model, Runnable onClick) {
+    /**
+     * @param width   the fixed width this row will be given by its caller's {@code setBounds},
+     *                used for text wrapping and reported back from {@link #getPreferredSize()}
+     * @param onClick invoked when the row is clicked, regardless of affordability
+     */
+    public ItemRow(int width, Model model, Runnable onClick) {
+        this.width = width;
         this.model = model;
         setOpaque(false);
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -62,12 +74,28 @@ public final class ItemRow extends JComponent {
         });
     }
 
-    /** Text column width: {@link #WIDTH} minus fixed left/right padding, with a floor so wrapping never collapses to nothing. */
-    private int textWidth() { return Math.max(80, WIDTH - 16); }
+    /** Text column width: {@link #width} minus fixed left/right padding, with a floor so wrapping never collapses to nothing. */
+    private int textWidth() { return Math.max(80, width - 16); }
+
+    /**
+     * Whether {@link Model#meta()} needs a line of its own instead of sitting right-aligned
+     * beside the title: true when the title and the meta text together (plus a 10px gap so they
+     * never touch) would be wider than the row. Without this the two simply overprinted each
+     * other, which a long title next to a long "needs Claim Extension II, Titanium Alloys" does
+     * routinely. Both {@link #getPreferredSize()} and {@link #paintComponent} ask this same
+     * question, so the row's height and its painting can't disagree about where the meta went.
+     */
+    private boolean metaOnOwnLine() {
+        String meta = model.meta();
+        if (meta == null || meta.isEmpty()) return false;
+        return getFontMetrics(TITLE).stringWidth(model.title()) + 10
+                + getFontMetrics(SMALL).stringWidth(meta) > width - 12;
+    }
 
     /**
      * Computed from the wrapped line counts of {@link Model#io()} and {@link Model#blurb()},
-     * plus a cost line unless {@link Model#done()}. The caller ({@code Game.positionTechRows})
+     * plus a cost line unless {@link Model#done()} and a line for {@link Model#meta()} when it
+     * doesn't fit beside the title ({@link #metaOnOwnLine()}). The caller ({@code Game.positionTechRows})
      * calls this once to size the row's {@code setBounds} rect and never again unless the
      * underlying tech's done-state changes and everything gets repositioned from scratch — there
      * is no live resizing in response to this component's own size changing, since it never does.
@@ -75,11 +103,12 @@ public final class ItemRow extends JComponent {
     @Override public Dimension getPreferredSize() {
         var fmSmall = getFontMetrics(SMALL);
         int lines = 0;
+        if (metaOnOwnLine()) lines++;                                // meta, pushed off the title line
         if (!model.done()) lines++;                                  // cost
         lines += Ui.wrap(model.io(), fmSmall, textWidth()).size();
         lines += Ui.wrap(model.blurb(), fmSmall, textWidth()).size();
         int h = 8 + getFontMetrics(TITLE).getHeight() + lines * (fmSmall.getHeight() - 1) + 6;
-        return new Dimension(WIDTH, h);
+        return new Dimension(width, h);
     }
 
     /** Draws the row: background/border, title and meta, the cost line (if not done), then the io and blurb text wrapped to width. */
@@ -107,12 +136,18 @@ public final class ItemRow extends JComponent {
         g.setFont(SMALL);
         var fm = g.getFontMetrics();
         String meta = model.meta();
-        if (meta != null && !meta.isEmpty()) {
+        boolean metaBelow = metaOnOwnLine();
+        if (meta != null && !meta.isEmpty() && !metaBelow) {
             g.setColor(model.done() ? Theme.GOOD : Theme.DIM);
             g.drawString(meta, getWidth() - 6 - fm.stringWidth(meta), y);
         }
 
         y += 2;
+        if (metaBelow) {
+            y += fm.getHeight() - 1;
+            g.setColor(model.done() ? Theme.GOOD : Theme.DIM);
+            g.drawString(meta, x, y);
+        }
         if (!model.done()) {
             y += fm.getHeight() - 1;
             float cx = x;

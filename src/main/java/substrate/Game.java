@@ -7,6 +7,7 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,22 +15,31 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 /**
- * Top-level Swing UI wiring for a session: assembles the board, ledger, status bar and the
- * BUILD / RESEARCH / MANUAL side tabs around a single {@link Engine}, and routes board clicks
- * and hovers back into engine calls. This is the only class that knows how the simulation is
- * laid out on screen; everything downstream ({@link BoardPanel}, {@link LedgerPanel}, {@link
- * ItemRow}, ...) is a dumb view driven from here.
+ * Top-level Swing UI wiring for a session: assembles the ledger and status bar, the main panel's
+ * MAP / RESEARCH tabs and the side panel's BUILD / MANUAL tabs around a single {@link Engine},
+ * and routes board clicks and hovers back into engine calls. This is the only class that knows
+ * how the simulation is laid out on screen; everything downstream ({@link BoardPanel}, {@link
+ * LedgerPanel}, {@link ItemRow}, ...) is a dumb view driven from here.
+ *
+ * <p>The window is two columns. The left one is the main panel ({@link #main()}): masthead and
+ * ledger above it, status bar below, and in between a two-tab deck holding the board itself and
+ * the research page — the two full-size views of the site, one at a time. The right one is the
+ * side panel ({@link #side()}): the build palette and the manual, the two things you want open
+ * *while* looking at either view. Research lived in the side panel originally and was 330px wide
+ * for it; as a main-panel tab it gets the board's full width and lays its rows out in columns
+ * (see {@link #RESEARCH_COLS}).
  *
  * <p><b>Every component is placed with an explicit {@code setBounds} rect, computed once, from
  * fixed constants.</b> There is no {@link LayoutManager} anywhere in this class — no {@link
  * BorderLayout}, {@link BoxLayout}, {@link GridLayout}, {@link FlowLayout}, or {@link
  * CardLayout} — and the window itself is fixed-size and not resizable (see {@link Main}), so
- * there is never a "reflow when the container's size changes" case to handle. {@link #root()}
- * and {@link #side()} lay out their children from hand-picked constants (the block right after
- * this Javadoc); {@link #buildTab()} does the same for a fixed-size, non-scrolling page since
- * its ~22 items are known to fit; {@link #techTab()} positions {@link ItemRow}s with a simple
- * "sum of preceding heights" loop ({@link #positionTechRows()}) since the research list doesn't
- * fit and needs a scrollbar — the one piece of Swing's built-in scrolling machinery kept, since
+ * there is never a "reflow when the container's size changes" case to handle. {@link #root()},
+ * {@link #main()} and {@link #side()} lay out their children from hand-picked constants (the
+ * block right after this Javadoc); {@link #buildTab()} does the same for a fixed-size,
+ * non-scrolling page since its ~22 items are known to fit; {@link #techPage()} positions {@link
+ * ItemRow}s with a "shortest column so far" loop ({@link #positionTechRows()}) since the research
+ * list still doesn't entirely fit and needs a scrollbar — the one piece of Swing's built-in
+ * scrolling machinery kept, since
  * panning a fixed-size, statically-positioned canvas isn't the kind of dynamic layout this is
  * about avoiding. Both mechanisms replace an earlier version built on {@code BoxLayout} +
  * {@code GridLayout} + {@code FlowLayout} + {@code CardLayout}, which chased a run of
@@ -38,8 +48,8 @@ import java.util.function.BooleanSupplier;
  * rewrite exists to rule out by construction: nothing here is ever asked "what size do you want
  * to be," so nothing can answer that question incorrectly.
  *
- * <p>Nothing in the BUILD or RESEARCH tabs is backed by a proper view-model class. The RESEARCH
- * tab's rows and the BUILD tab's single detail row are each a fresh anonymous {@link
+ * <p>Nothing in the BUILD tab or the RESEARCH page is backed by a proper view-model class. The
+ * research rows and the BUILD tab's single detail row are each a fresh anonymous {@link
  * ItemRow.Model} inner class, closing over a loop variable ({@code t}) or over {@code this}
  * directly, plus this class's mutable fields ({@code selected}, {@code demolishing}, {@code
  * toggling}). The BUILD tab's per-machine tiles and its two tool tiles go one step further and
@@ -69,12 +79,40 @@ public final class Game implements BoardPanel.Handler {
     private static final int LEDGER_W = 768, LEDGER_H = 132;
     /** Status bar height. */
     private static final int STATUS_H = 26;
-    /** Board area height; its width is {@link #LEFT_W} and it centers its square grid within that itself. */
-    private static final int BOARD_H = SIDE_H - HEADER_H - GAP - LEDGER_H - GAP - GAP - STATUS_H;
+    /**
+     * Main (left) panel height: everything between the ledger and the status bar, its own
+     * MAP/RESEARCH tab row included.
+     */
+    private static final int MAIN_H = SIDE_H - HEADER_H - GAP - LEDGER_H - GAP - GAP - STATUS_H;
     /** Tab button row height, and the gap below it before tab content starts. */
     private static final int TAB_ROW_H = 30, TAB_GAP = 4;
+    /**
+     * Board view height: {@link #MAIN_H} minus the main panel's own tab row. Its width is {@link
+     * #LEFT_W} and it centers its square grid within that itself, so the grid is height-bound —
+     * the pixels the MAP/RESEARCH row costs come straight off the cell size, which is why that
+     * row is as short as it is.
+     */
+    private static final int BOARD_H = MAIN_H - TAB_ROW_H - TAB_GAP;
+    /**
+     * Width of one MAP/RESEARCH tab button. Fixed, rather than {@code LEFT_W / names.size()} the
+     * way {@link #side()} divides {@link #SIDE_W} between its tabs: a 394px-wide button around
+     * 10px of centered text reads as a banner rather than a tab, so the main strip is two
+     * normal-width tabs left-aligned, with the rest of the row left as bare panel.
+     */
+    private static final int MAIN_TAB_W = 150;
     /** Fixed inner padding and content width shared by every tab page. */
     static final int TAB_PAD = 12, TAB_CONTENT_W = SIDE_W - TAB_PAD * 2;
+    /**
+     * RESEARCH page geometry, now that the page is as wide as the main panel instead of the side
+     * panel: how many columns of {@link ItemRow}s to lay the techs out in, the gap between them,
+     * the page's usable width, and the width one row therefore gets. {@link #RESEARCH_VIEW_W}
+     * stops 10px short of {@link #LEFT_W} because {@link Ui#scroll}'s vertical scrollbar reserves
+     * 9px of it — see {@link #positionTechRows()} for what claiming the full width would summon.
+     */
+    private static final int RESEARCH_COLS = 2, RESEARCH_GAP = 8;
+    private static final int RESEARCH_VIEW_W = LEFT_W - 10;
+    private static final int RESEARCH_COL_W =
+            (RESEARCH_VIEW_W - TAB_PAD * 2 - RESEARCH_GAP * (RESEARCH_COLS - 1)) / RESEARCH_COLS;
     /**
      * Fixed height for the rotating hint box. {@link #hintText()}'s longest tip wraps to about
      * five lines at {@link #TAB_CONTENT_W}; this is sized to comfortably fit that, with slack
@@ -104,14 +142,13 @@ public final class Game implements BoardPanel.Handler {
      */
     private final MachineDetail detail;
     /**
-     * The three BUILD/RESEARCH/MANUAL tab bodies, keyed by tab name — the whole replacement for
-     * a {@link CardLayout} deck. All three are added to the side panel at the same fixed bounds
-     * and given fixed size (see {@link #side()}); {@link #showTab(String)} just flips {@link
-     * JComponent#setVisible} on each instead of asking a layout manager to swap cards.
+     * The main panel's MAP/RESEARCH deck: the board view and the research page, stacked at
+     * identical bounds in the left column with exactly one visible at a time. See {@link #main()}
+     * and {@link TabDeck}.
      */
-    private final Map<String, JComponent> tabPanels = new LinkedHashMap<>();
-    /** The three tab buttons (BUILD/RESEARCH/MANUAL), kept so {@link #showTab(String)} can toggle their active state. */
-    private final List<TabButton> tabs = new ArrayList<>();
+    private final TabDeck mainTabs = new TabDeck();
+    /** The side panel's BUILD/MANUAL deck; same mechanism as {@link #mainTabs}. See {@link #side()}. */
+    private final TabDeck sideTabs = new TabDeck();
     /**
      * Every {@link MachineIcon} tile in the BUILD tab's grid, in {@link Machine#BUILDABLE}
      * order, kept so {@link #refresh()} can hide/show them as research completes (see {@link
@@ -130,7 +167,13 @@ public final class Game implements BoardPanel.Handler {
      * just the one row that changed (see {@link #positionTechRows()}'s Javadoc).
      */
     private JPanel researchContent;
-    /** Divider between not-yet-researched and completed rows in the RESEARCH tab; hidden until the first tech completes. */
+    /**
+     * Headings above the two blocks of the RESEARCH page. Both span the full page width across
+     * the columns beneath them, and both are hidden when their block is empty — "Available" once
+     * the whole tree is researched, "Completed" until the first tech lands. Positioned by {@link
+     * #positionTechRows()} along with the rows themselves.
+     */
+    private final SectionLabel availableLabel = new SectionLabel("Available");
     private final SectionLabel finishedLabel = new SectionLabel("Completed");
     /** The in-game manual/log panel shown under the MANUAL tab. */
     private final Manual manual;
@@ -164,10 +207,11 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Builds the full window content: gradient/grid backdrop, masthead and SAVE/ABANDON buttons
-     * up top, the ledger below that, the board and status bar below that, and the tabbed side
-     * panel to the right — every one of them placed with an explicit {@code setBounds} call
-     * computed from the constants at the top of this class, not a {@link LayoutManager}. Also
-     * binds keyboard shortcuts and does the first {@link #refresh()}.
+     * up top, the ledger below that, the tabbed main panel (MAP/RESEARCH) and the status bar
+     * below that, and the tabbed side panel (BUILD/MANUAL) to the right — every one of them
+     * placed with an explicit {@code setBounds} call computed from the constants at the top of
+     * this class, not a {@link LayoutManager}. Also binds keyboard shortcuts and does the first
+     * {@link #refresh()}.
      *
      * @return the assembled root component, ready to drop into a frame
      */
@@ -223,11 +267,12 @@ public final class Game implements BoardPanel.Handler {
         ledger.setBounds(MARGIN_L, ledgerY, LEDGER_W, LEDGER_H);
         root.add(ledger);
 
-        int boardY = ledgerY + LEDGER_H + GAP;
-        boardPanel.setBounds(MARGIN_L, boardY, LEFT_W, BOARD_H);
-        root.add(boardPanel);
+        int mainY = ledgerY + LEDGER_H + GAP;
+        var mainPanel = main();
+        mainPanel.setBounds(MARGIN_L, mainY, LEFT_W, MAIN_H);
+        root.add(mainPanel);
 
-        status.setBounds(MARGIN_L, boardY + BOARD_H + GAP, LEFT_W, STATUS_H);
+        status.setBounds(MARGIN_L, mainY + MAIN_H + GAP, LEFT_W, STATUS_H);
         root.add(status);
 
         var sidePanel = side();
@@ -243,15 +288,15 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the right-hand tabbed panel: three {@link TabButton}s side by side, and the three
-     * tab bodies stacked on top of one another underneath at identical fixed bounds — the whole
-     * replacement for a {@link CardLayout} deck, with {@link #showTab(String)} toggling {@link
-     * JComponent#setVisible} instead of asking a layout manager to swap cards. Starts on BUILD.
+     * A null-layout panel painting the shared panel look: the same vertical gradient and
+     * one-pixel border {@link BoardPanel} paints for itself, so the main panel's tab row and the
+     * side panel's sit on identical chrome. Extracted when the main panel gained a tab strip of
+     * its own and needed the exact same backdrop the side panel already had.
      *
-     * @return the side panel component
+     * @return an empty, null-layout panel that paints the panel gradient and border
      */
-    private JComponent side() {
-        var panel = new JPanel(null) {
+    private static JPanel framed() {
+        return new JPanel(null) {
             @Override protected void paintComponent(Graphics g) {
                 var g2 = (Graphics2D) g;
                 g2.setPaint(new GradientPaint(0, 0, Theme.PANEL, 0, getHeight(), new Color(0x1E, 0x17, 0x0E)));
@@ -260,34 +305,79 @@ public final class Game implements BoardPanel.Handler {
                 g2.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
             }
         };
+    }
 
-        List<String> names = List.of("BUILD", "RESEARCH", "MANUAL");
+    /**
+     * Builds the main (left) panel: a MAP and a RESEARCH {@link TabButton} along the top, and the
+     * two bodies they switch between — the {@link BoardPanel} and the research page — stacked
+     * underneath at identical fixed bounds, {@link TabDeck} flipping which one is visible. Starts
+     * on MAP.
+     *
+     * <p>The board is a tab body here rather than a component of {@link #root()} directly, which
+     * is the whole point of this method: the research page was the middle tab of the side panel
+     * and 330px wide, and moving it here gives it the board's full width — see {@link
+     * #RESEARCH_COLS}, which spends that width on a second column of rows. Everything around the
+     * two views (masthead, ledger, status bar) stays shared, so switching to RESEARCH swaps only
+     * the middle of the left column and leaves the readouts in place.
+     *
+     * @return the main panel component
+     */
+    private JComponent main() {
+        var panel = framed();
+
+        int x = 0;
+        for (String name : List.of("MAP", "RESEARCH")) {
+            var tab = mainTabs.button(name);
+            tab.setBounds(x, 0, MAIN_TAB_W, TAB_ROW_H);
+            panel.add(tab);
+            x += MAIN_TAB_W;
+        }
+
+        mainTabs.body("MAP", boardPanel);
+        mainTabs.body("RESEARCH", techPage());
+        for (JComponent p : mainTabs.panels.values()) {
+            p.setBounds(0, TAB_ROW_H + TAB_GAP, LEFT_W, BOARD_H);
+            panel.add(p);
+        }
+        mainTabs.show("MAP");
+
+        return panel;
+    }
+
+    /**
+     * Builds the right-hand tabbed panel: two {@link TabButton}s side by side, and the two tab
+     * bodies stacked on top of one another underneath at identical fixed bounds, with {@link
+     * TabDeck#show(String)} toggling {@link JComponent#setVisible} instead of asking a layout
+     * manager to swap cards. Starts on BUILD. RESEARCH used to be the middle tab here; it lives
+     * in {@link #main()} now.
+     *
+     * @return the side panel component
+     */
+    private JComponent side() {
+        var panel = framed();
+
+        List<String> names = List.of("BUILD", "MANUAL");
         int tabW = SIDE_W / names.size();
         for (int i = 0; i < names.size(); i++) {
-            String name = names.get(i);
-            var tab = new TabButton(name, () -> showTab(name));
-            tabs.add(tab);
+            var tab = sideTabs.button(names.get(i));
             // The last tab absorbs the rounding remainder so the row's total width is exactly
-            // SIDE_W instead of leaving a sliver of unpainted panel past the third tab.
+            // SIDE_W instead of leaving a sliver of unpainted panel past the final tab.
             int w = (i == names.size() - 1) ? SIDE_W - tabW * i : tabW;
             tab.setBounds(tabW * i, 0, w, TAB_ROW_H);
             panel.add(tab);
         }
-        tabs.get(0).active = true;
 
         int contentY = TAB_ROW_H + TAB_GAP;
         int contentH = SIDE_H - contentY;
-        tabPanels.put("BUILD", buildTab());
-        tabPanels.put("RESEARCH", techTab());
+        sideTabs.body("BUILD", buildTab());
         var manualPanel = Ui.scroll(manual);
         manualPanel.setOpaque(false);
-        tabPanels.put("MANUAL", manualPanel);
-        for (JComponent p : tabPanels.values()) {
+        sideTabs.body("MANUAL", manualPanel);
+        for (JComponent p : sideTabs.panels.values()) {
             p.setBounds(0, contentY, SIDE_W, contentH);
             panel.add(p);
         }
-        tabPanels.get("RESEARCH").setVisible(false);
-        tabPanels.get("MANUAL").setVisible(false);
+        sideTabs.show("BUILD");
 
         return panel;
     }
@@ -337,6 +427,7 @@ public final class Game implements BoardPanel.Handler {
             boardPanel.setToggling(false);
             boardPanel.setDemolishing(demolishing);
             boardPanel.setGhost(null);
+            if (demolishing) showBoard();
             refresh();
         });
         demolishIcon.setToolTipText("Dismantle: click a machine to remove the whole block, "
@@ -351,6 +442,7 @@ public final class Game implements BoardPanel.Handler {
             boardPanel.setDemolishing(false);
             boardPanel.setToggling(toggling);
             boardPanel.setGhost(null);
+            if (toggling) showBoard();
             refresh();
         });
         powerIcon.setToolTipText("Power Switch: click a machine to switch its whole block on or off. "
@@ -406,6 +498,10 @@ public final class Game implements BoardPanel.Handler {
      * BoardPanel}'s ghost preview is what flags it can't actually be placed yet. Shared by every
      * {@link MachineIcon}'s click handler.
      *
+     * <p>Also switches the main panel back to MAP (see {@link #showBoard()}): the BUILD palette
+     * is visible from either main-panel tab, so arming a machine while the research page is up
+     * would otherwise leave the player holding a ghost with nowhere to put it.
+     *
      * @param m the machine icon that was clicked
      */
     private void pickMachine(Machine m) {
@@ -415,6 +511,7 @@ public final class Game implements BoardPanel.Handler {
         boardPanel.setDemolishing(false);
         boardPanel.setToggling(false);
         boardPanel.setGhost(m);
+        showBoard();
         refresh();
     }
 
@@ -430,28 +527,25 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Builds the RESEARCH tab: a "Research" heading, one {@link ItemRow} per {@link Tech} (in a
-     * null-layout content panel positioned by {@link #positionTechRows()}), and the {@link
-     * #finishedLabel} divider — all wrapped in a fixed-size {@link Ui#scroll}, since ~26 techs
-     * are known in advance not to fit statically the way BUILD's ~22 items do.
+     * Builds the RESEARCH page of the main panel: the "Available"/"Completed" headings and one
+     * {@link ItemRow} per {@link Tech}, all in a null-layout content panel positioned by {@link
+     * #positionTechRows()} and wrapped in a fixed-size {@link Ui#scroll}. Two columns of rows
+     * (see {@link #RESEARCH_COLS}) get most of the tree on screen at once, but "most" isn't
+     * "all", so the scrollbar stays — unlike BUILD's ~22 items, which are known in advance to fit.
      *
      * <p>Same functional-callback-style wiring as {@link #buildTab()}: each row gets a fresh
      * anonymous {@link ItemRow.Model} closing over the loop variable {@code t} and {@code
      * engine}. Row positions themselves are computed by {@link #positionTechRows()}, not here —
      * this method only builds the rows and hands them off.
      *
-     * @return the scrollable RESEARCH tab body
+     * @return the scrollable RESEARCH page body
      */
-    private JComponent techTab() {
+    private JComponent techPage() {
         researchContent = new JPanel(null);
         researchContent.setOpaque(false);
 
-        var researchLabel = new SectionLabel("Research");
-        researchLabel.setBounds(TAB_PAD, 0, TAB_CONTENT_W, 20);
-        researchContent.add(researchLabel);
-
         for (Tech t : Tech.values()) {
-            var row = new ItemRow(new ItemRow.Model() {
+            var row = new ItemRow(RESEARCH_COL_W, new ItemRow.Model() {
                 public String title() { return t.label; }
                 public String meta()  {
                     if (engine.board.has(t)) return "done";
@@ -473,6 +567,7 @@ public final class Game implements BoardPanel.Handler {
             techRows.put(t, row);
             researchContent.add(row);
         }
+        researchContent.add(availableLabel);
         researchContent.add(finishedLabel);
         positionTechRows();
 
@@ -480,13 +575,19 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * Positions every research row and the {@link #finishedLabel} divider from scratch: every
-     * not-yet-researched tech first, in declaration order, then — if anything is done yet — the
-     * divider, then every researched tech, also in declaration order. Each row's height comes
-     * from its own {@link ItemRow#getPreferredSize()}; the running {@code y} cursor is a plain
-     * loop variable, not a {@link LayoutManager}.
+     * Positions the whole research page from scratch: the {@link #availableLabel} heading and
+     * every not-yet-researched tech under it, then — if anything is done yet — the {@link
+     * #finishedLabel} heading and every researched tech under that. Each block's rows are dealt
+     * across {@link #RESEARCH_COLS} columns by {@link #placeTechRow}; each row's height comes
+     * from its own {@link ItemRow#getPreferredSize()}, and the cursors are plain {@code int}s in
+     * an array, not a {@link LayoutManager}.
      *
-     * <p>Called once from {@link #techTab()}, then again from {@link #refresh()} (liberally —
+     * <p>The two headings span the full page width across the columns beneath them, and each
+     * block starts both columns level again below its heading, so a completed tech can never
+     * appear alongside an available one — the blocks stay visually separate even though the
+     * columns within them are packed independently.
+     *
+     * <p>Called once from {@link #techPage()}, then again from {@link #refresh()} (liberally —
      * see there for why that's cheap enough) and {@link #abandon()} whenever a tech's done state
      * might have changed. Recomputing every row's position from scratch, rather than moving just
      * the one row that changed the way an earlier {@link BoxLayout}-based version did, is both
@@ -500,50 +601,67 @@ public final class Game implements BoardPanel.Handler {
      * siblings, which is the dynamism this class avoids.
      */
     private void positionTechRows() {
-        int y = 24;
+        boolean anyOpen = false, anyDone = false;
         for (Tech t : Tech.values()) {
-            if (engine.board.has(t)) continue;
-            var row = techRows.get(t);
-            int h = row.getPreferredSize().height;
-            row.setBounds(TAB_PAD, y, TAB_CONTENT_W, h);
-            y += h + 5;
+            if (engine.board.has(t)) anyDone = true; else anyOpen = true;
         }
-        boolean anyDone = false;
-        for (Tech t : Tech.values()) if (engine.board.has(t)) { anyDone = true; break; }
+
+        int[] colY = new int[RESEARCH_COLS];
+        int y = TAB_PAD;
+        int headingW = RESEARCH_VIEW_W - TAB_PAD * 2;
+
+        availableLabel.setVisible(anyOpen);
+        if (anyOpen) {
+            availableLabel.setBounds(TAB_PAD, y, headingW, 20);
+            Arrays.fill(colY, y + 24);
+            for (Tech t : Tech.values()) if (!engine.board.has(t)) placeTechRow(techRows.get(t), colY);
+            y = deepest(colY);
+        }
         finishedLabel.setVisible(anyDone);
         if (anyDone) {
-            finishedLabel.setBounds(TAB_PAD, y, TAB_CONTENT_W, 20);
-            y += 20 + 4;
-            for (Tech t : Tech.values()) {
-                if (!engine.board.has(t)) continue;
-                var row = techRows.get(t);
-                int h = row.getPreferredSize().height;
-                row.setBounds(TAB_PAD, y, TAB_CONTENT_W, h);
-                y += h + 5;
-            }
+            finishedLabel.setBounds(TAB_PAD, y, headingW, 20);
+            Arrays.fill(colY, y + 24);
+            for (Tech t : Tech.values()) if (engine.board.has(t)) placeTechRow(techRows.get(t), colY);
+            y = deepest(colY);
         }
-        // SIDE_W minus a little, not SIDE_W itself: Ui.scroll's vertical scrollbar reserves 9px
-        // of the panel's width, and a preferred width that claims the full SIDE_W (wider than
-        // the viewport that leaves for it) makes JScrollPane decide it ALSO needs a horizontal
+        // RESEARCH_VIEW_W, not LEFT_W: Ui.scroll's vertical scrollbar reserves 9px of the
+        // panel's width, and a preferred width that claims the full LEFT_W (wider than the
+        // viewport that leaves for it) makes JScrollPane decide it ALSO needs a horizontal
         // scrollbar to pan across that extra sliver — a second, unwanted scrollbar for content
         // that was never actually meant to scroll sideways.
-        researchContent.setPreferredSize(new Dimension(SIDE_W - 10, y + 10));
+        researchContent.setPreferredSize(new Dimension(RESEARCH_VIEW_W, y + 10));
         researchContent.revalidate();
     }
 
     /**
-     * Switches which tab body is visible and updates each {@link TabButton}'s active
-     * (highlighted) state to match — the entire replacement for asking a {@link CardLayout} to
-     * swap cards, now that {@link #tabPanels} just holds all three at once.
+     * Places one research row into whichever column currently reaches least far down (leftmost on
+     * a tie) and advances that column's cursor past it.
      *
-     * @param name one of "BUILD", "RESEARCH", "MANUAL" — must match a key put in {@link #side()}
+     * <p>Packing by shortest column rather than dealing strictly left-right-left matters because
+     * rows aren't a uniform height — a tech whose prerequisites are listed and whose blurb wraps
+     * to three lines is noticeably taller than one that fits on one — so fixed alternation would
+     * leave one column trailing the other by a growing margin. Filling the shorter column keeps
+     * the two within one row's height of each other and still reads top-to-bottom, left-to-right
+     * for the common case of similarly-sized neighbours. Declaration order is preserved in the
+     * sense that matters here: an earlier tech is never placed below a later one in the same
+     * column.
+     *
+     * @param row  the row to place
+     * @param colY per-column {@code y} cursors, mutated in place
      */
-    private void showTab(String name) {
-        for (var e : tabPanels.entrySet()) e.getValue().setVisible(e.getKey().equals(name));
-        for (TabButton t : tabs) {
-            t.active = t.label.equals(name);
-            t.repaint();
-        }
+    private static void placeTechRow(ItemRow row, int[] colY) {
+        int col = 0;
+        for (int i = 1; i < colY.length; i++) if (colY[i] < colY[col]) col = i;
+        int h = row.getPreferredSize().height;
+        row.setBounds(TAB_PAD + col * (RESEARCH_COL_W + RESEARCH_GAP), colY[col], RESEARCH_COL_W, h);
+        colY[col] += h + 5;
+    }
+
+    /** The lowest point any column has reached, i.e. where the block below it has to start. */
+    private static int deepest(int[] colY) {
+        int y = colY[0];
+        for (int v : colY) y = Math.max(y, v);
+        return y;
     }
 
     /* ------------------------------------------------------------------ */
@@ -571,9 +689,9 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Re-syncs all UI surfaces with current engine state: updates the hint text, repositions the
-     * RESEARCH tab's rows in case a tech's done state just changed, shows/hides BUILD tab
-     * machine icons per {@link #updateMachineIconVisibility()}, and repaints the ledger, the
-     * three tab bodies, and the manual. Called after every player action and on a timer from
+     * RESEARCH page's rows in case a tech's done state just changed, shows/hides BUILD tab
+     * machine icons per {@link #updateMachineIconVisibility()}, and repaints the ledger, every
+     * tab body in both decks, and the manual. Called after every player action and on a timer from
      * {@link #start()}.
      *
      * <p>Nothing here calls {@code revalidate()} on anything other than {@link
@@ -590,7 +708,8 @@ public final class Game implements BoardPanel.Handler {
         positionTechRows();
         updateMachineIconVisibility();
         ledger.repaint();
-        for (JComponent p : tabPanels.values()) p.repaint();
+        for (JComponent p : mainTabs.panels.values()) p.repaint();
+        for (JComponent p : sideTabs.panels.values()) p.repaint();
         manual.repaint();
     }
 
@@ -712,6 +831,7 @@ public final class Game implements BoardPanel.Handler {
                 boardPanel.setGhost(null);
                 boardPanel.setToggling(false);
                 boardPanel.setDemolishing(demolishing);
+                if (demolishing) showBoard();
                 refresh();
             }
         });
@@ -724,6 +844,7 @@ public final class Game implements BoardPanel.Handler {
                 boardPanel.setGhost(null);
                 boardPanel.setDemolishing(false);
                 boardPanel.setToggling(toggling);
+                if (toggling) showBoard();
                 refresh();
             }
         });
@@ -740,6 +861,19 @@ public final class Game implements BoardPanel.Handler {
         am.put("shiftUp", new AbstractAction() {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { boardPanel.setShiftHeld(false); }
         });
+    }
+
+    /**
+     * Selects the main panel's MAP tab, if it isn't already showing. Called from every path that
+     * arms something for use on the board — {@link #pickMachine}, the two {@link ToolIcon}
+     * handlers in {@link #buildTab()}, and the D/P shortcuts — since all of those are reachable
+     * while the RESEARCH page is up (the BUILD palette and the keyboard don't care which
+     * main-panel tab is selected) and every one of them is a statement of intent to click on the
+     * board. Cheap and idempotent when MAP is already the visible tab: {@link TabDeck#show} just
+     * re-asserts the same visibility and repaints two small buttons.
+     */
+    private void showBoard() {
+        mainTabs.show("MAP");
     }
 
     /**
@@ -1387,18 +1521,64 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * A tab button (BUILD/RESEARCH/MANUAL). A bespoke {@link JComponent} rather than a {@link
-     * JToggleButton} so the label's letter-spacing is under manual control: the constructor's
-     * {@code onClick} is invoked straight from a raw mouse listener, and painting measures each
-     * character's width, centers the whole run, then draws it one glyph at a time with a fixed
-     * 2px gap between letters. Sized entirely by whatever {@code setBounds} rect {@link
-     * #side()} gives it; painting reads that back via {@link #getWidth()}/{@link #getHeight()}
-     * rather than declaring its own preferred size.
+     * One tab strip's state: its {@link TabButton}s, and the bodies they switch between keyed by
+     * tab name. The whole replacement for a {@link CardLayout} deck — every body is added to its
+     * parent at the same fixed bounds and {@link #show(String)} flips {@link
+     * JComponent#setVisible} on each, instead of asking a layout manager to swap cards.
+     *
+     * <p>Placing the buttons is deliberately left to the caller rather than done here, because
+     * the two strips place them differently: {@link Game#side()} divides {@link Game#SIDE_W}
+     * evenly between its tabs, {@link Game#main()} uses fixed-width ones (see {@link
+     * Game#MAIN_TAB_W}). So this owns the wiring and the selected state, not the geometry — in
+     * keeping with the rest of this class, where every {@code setBounds} rect is computed at the
+     * site that knows which constants it comes from.
+     */
+    private static final class TabDeck {
+        /** Bodies by tab name, in insertion order; the caller iterates these to place them. */
+        final Map<String, JComponent> panels = new LinkedHashMap<>();
+        /** Every button in the strip, so {@link #show(String)} can update all their active states. */
+        final List<TabButton> buttons = new ArrayList<>();
+
+        /**
+         * Creates a button that selects {@code name} when clicked. The caller gives it bounds and
+         * adds it to a parent; this only remembers it for {@link #show(String)}.
+         *
+         * @param name tab name, matched against the keys passed to {@link #body}
+         * @return the new button
+         */
+        TabButton button(String name) {
+            var b = new TabButton(name, () -> show(name));
+            buttons.add(b);
+            return b;
+        }
+
+        /** Registers {@code body} as the page shown while {@code name} is the selected tab. */
+        void body(String name, JComponent body) { panels.put(name, body); }
+
+        /** Shows {@code name}'s body, hides every other one, and highlights the matching button. */
+        void show(String name) {
+            for (var e : panels.entrySet()) e.getValue().setVisible(e.getKey().equals(name));
+            for (TabButton t : buttons) {
+                t.active = t.label.equals(name);
+                t.repaint();
+            }
+        }
+    }
+
+    /**
+     * A tab button (MAP/RESEARCH in the main panel, BUILD/MANUAL in the side one). A bespoke
+     * {@link JComponent} rather than a {@link JToggleButton} so the label's letter-spacing is
+     * under manual control: the constructor's {@code onClick} is invoked straight from a raw
+     * mouse listener, and painting measures each character's width, centers the whole run, then
+     * draws it one glyph at a time with a fixed 2px gap between letters. Sized entirely by
+     * whatever {@code setBounds} rect {@link #main()} or {@link #side()} gives it; painting reads
+     * that back via {@link #getWidth()}/{@link #getHeight()} rather than declaring its own
+     * preferred size.
      */
     private static final class TabButton extends JComponent {
-        /** Tab name, also used as the {@link CardLayout} key in {@link Game#showTab}. */
+        /** Tab name, also the key its body is registered under in its {@link TabDeck}. */
         final String label;
-        /** Whether this is the currently shown tab; toggled externally by {@link Game#showTab}. */
+        /** Whether this is the currently shown tab; toggled externally by {@link TabDeck#show}. */
         boolean active;
 
         /**
@@ -1542,7 +1722,7 @@ public final class Game implements BoardPanel.Handler {
                 new String[]{"Collapse",
                     "Once you've won, COLLAPSE consumes every machine on the board and refuses them into a single Monolith across the northern half of your claim - the same fusion rule as any other block, applied to the whole site at once. Resources, research and the claim survive; only what stands on the ground changes, and the southern half stays free to build on. It's repeatable: extend the claim, rebuild, collapse again for a bigger Monolith."},
                 new String[]{"Controls",
-                    "Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Escape, or a right-click anywhere, clears everything at once - the armed machine included. The site saves itself every twenty seconds."});
+                    "The main panel switches between MAP, the site itself, and RESEARCH, the tech tree; picking a machine or a tool jumps back to MAP so you have somewhere to click. This panel and the build palette stay put either way. Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Escape, or a right-click anywhere, clears everything at once - the armed machine included. The site saves itself every twenty seconds."});
         }
 
         /**
