@@ -76,11 +76,9 @@ public final class Group {
     /**
      * Spreadsheet-style grid reference for this group's top-left cell, e.g. {@code "C4"}.
      *
-     * <p>Converts the x coordinate to a column letter via raw char arithmetic,
-     * {@code (char) ('A' + x)}. This only works because the board is {@link Board#W} = 15 wide,
-     * comfortably within {@code A}-{@code O}; it would silently produce garbage past 26 columns.
-     * The same trick is duplicated independently in {@code BoardPanel}'s ruler-drawing code
-     * rather than shared from here.
+     * <p>Delegates to {@link Board#where(int)}, which owns the {@code (char) ('A' + x)} column
+     * arithmetic and its 26-column limitation, so a block and a single cell are always named the
+     * same way. {@code BoardPanel}'s ruler still spells its own column letters out independently.
      */
-    public String where() { return (char) ('A' + x) + String.valueOf(y + 1); }
+    public String where() { return Board.where(Board.idx(x, y)); }
 }

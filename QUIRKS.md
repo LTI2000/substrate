@@ -241,10 +241,13 @@ an oversight.
 ## UI
 
 - **Spreadsheet-style column letters via raw char arithmetic** —
-  `(char) ('A' + x)` appears independently in both `Group.where()` and
-  `BoardPanel`'s ruler code. Works only because the board is 15 wide (fits in
-  A–O); silently breaks past 26 columns.
-  (`src/main/java/substrate/Group.java:34`, `src/main/java/substrate/BoardPanel.java:284`)
+  `(char) ('A' + x)`. Works only because the board is 15 wide (fits in A–O);
+  silently breaks past 26 columns. Cell references share one copy of it
+  (`Board.where(int)`, which `Group.where()` delegates to, so a block and a
+  bare cell can't spell a coordinate differently), but `BoardPanel`'s ruler
+  still does its own independently.
+  (`src/main/java/substrate/Board.java` (`where`), `src/main/java/substrate/Group.java`,
+  `src/main/java/substrate/BoardPanel.java` (`rulers`))
 
 - **`Board.margin()` hardcodes `15`** instead of referencing the `Board.W`
   constant sitting two lines above it — a duplicated magic number for the
@@ -270,6 +273,49 @@ an oversight.
   `paintComponent()` — self-updating tutorial text, recomputed far more often
   than it needs to be.
   (`src/main/java/substrate/Game.java:574-577`)
+
+- **An advisory that the rules themselves don't enforce, and a "tool" that
+  isn't one** — `Engine.smothered(int)` flags a cell where a machine that
+  can't mine is parked on ore. Nothing in the simulation forbids that (
+  `Engine.place` only rejects the mirror-image mistake, a rig on bare rock),
+  and this deliberately stays advice rather than becoming a placement rule:
+  wiring a pylon across a vein to reach a better one is a legitimate trade, so
+  the code's job is to make the cost visible, not to refuse it. Three cases are
+  excluded because the player couldn't undo them anyway — the `CORE` (planted
+  by the survey), the `MONOLITH` (stamped across the claim by `collapse()` on
+  purpose), and anything outside the claim (unsurveyed ore isn't a patch yet).
+  The UI switch that surfaces it, `Game.patchCheck`, then breaks the pattern of
+  the two toggles it sits beside in the BUILD tab's Tools row: `demolishing`
+  and `toggling` each disarm the other and are cleared by ESCAPE/right-click,
+  while this one arms nothing, clears nothing, and is deliberately *not*
+  cleared by either — it's a way of looking at the board, and a right-click
+  meant to put the cursor down shouldn't throw away the marks being read.
+  (`src/main/java/substrate/Engine.java` (`smothered`, `wouldSmother`),
+  `src/main/java/substrate/Game.java` (`togglePatchCheck`, `clearSelection`))
+
+- **One field, two meanings, disambiguated by the machine standing on it** —
+  `Fusion.make` sets `Group.ore`/`richness` for *any* group covering ore, not
+  just mining ones, so for a rig they describe the seam being worked and for a
+  furnace they describe a patch being sat on. `Game.inspect(Group)` branches on
+  `Spec.mines()` to decide which readout the same two fields deserve: a
+  richness multiplier, or an amber count of patches being smothered. The
+  averaged `richness` is meaningless in the second case anyway — a 3×3 block
+  over two ore cells averages down to 0.22 — which is exactly why quoting it
+  there read as a benefit rather than the loss it is.
+  (`src/main/java/substrate/Game.java` (`inspect`, `smotherNote`))
+
+- **Survey annotations painted on top of the artwork, because the artwork owns
+  its cell** — `Art.paint` fills a machine's whole footprint, so
+  `BoardPanel.smotherMark` runs in a pass *after* the machine loop rather than
+  with the ore shading at the top of the frame, which is where every other
+  per-cell decoration lives. It also refuses to draw the ore's letter tag even
+  though the machine has buried the cell's own: the mark is per-cell while
+  `label`'s status line and name plate are anchored to a whole fused group's
+  corners, so any text added here would eventually be drawn straight through
+  theirs. The highlight's colour is the ore's, lifted toward chalk, precisely
+  because `HOT` and `AMBER` already mean "no power" and "switched off" on this
+  board and a smothered patch is neither.
+  (`src/main/java/substrate/BoardPanel.java` (`smotherMark`))
 
 - **A tech tree laid out by hand, gutters and all** — `TechTree` runs a
   three-pass graph layout with no library behind it: tiers by longest path to

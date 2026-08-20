@@ -49,6 +49,12 @@ Saves live in `~/.substrate/site.txt`. Time spent away is caught up when you ret
 - Power Switch (or press P) toggles a whole fused block off — it stops drawing power and producing
   but stays built, so you can free up power for something else without paying to demolish and rebuild.
   An off block still conducts power through to whatever is fused or wired past it.
+- A machine that cannot mine will happily stand on an ore patch, and quietly costs you
+  everything a rig there would have dug. Every such cell wears a small crossed-out ore pip in its
+  corner, and the placement ghost wears the same badge before you commit to the click. Patch Check
+  (or press O) lights all of them up at once, in the buried ore's own colour, and counts them in
+  the status bar. It is a view, not a tool: it changes nothing about what a click does, so you can
+  leave it on while you build, and Escape leaves it alone.
 - Amber dashes mark the edge of your claim. Research widens it.
 - Hover anything for readings. The MANUAL tab explains the rest.
 - Victory: build a Fusion Reactor, the machine at the top of the research tree. The site marks
@@ -70,7 +76,7 @@ src/main/java/substrate/
                                          (Game: MAP/RESEARCH main tabs, BUILD/MANUAL side tabs)
   Save, Main                             persistence and the entry point
 src/test/java/substrate/
-  FusionTest, EngineTest, SessionTest    35 assertions over the rules
+  FusionTest, EngineTest, SessionTest    37 assertions over the rules
   TechTreeTest                           the research tree's layout holds together
   CostTest                               prices iterate in the order they're written
   ArtTest                                paints offscreen and checks things move

@@ -29,6 +29,13 @@ import java.awt.geom.*;
  * that's fine only because the board is currently {@link Board#W} = 15 wide, and would need
  * revisiting (e.g. AA, AB, ...) if the board ever grew past a single letter's worth of columns.
  *
+ * <p><b>Smothered patches are annotated on top of the artwork.</b> A machine that cannot mine,
+ * standing on ore, is a permanent silent loss (see {@link Engine#smothered(int)}), so every such
+ * cell gets a crossed-out ore pip in its corner — painted after the machines, because the art
+ * fills its own cell and would bury a mark drawn with the ore beneath it. The BUILD tab's patch
+ * check ({@link #setPatchCheck}) promotes those badges to full-cell pulsing highlights; see
+ * {@link #smotherMark}.
+ *
  * <p><b>Ore richness is drawn as dot pips, not a number.</b> {@link #drawPips} lays out a small
  * hand-centered grid of dots (three per row) rather than printing a numeral, purely as visual
  * flavor for the survey-chart look — it is a tiny bespoke layout algorithm with no reuse
@@ -65,6 +72,14 @@ public final class BoardPanel extends JComponent {
     private boolean demolishing;
     /** Whether the power-switch tool is active, previewing the fused block under the cursor for toggling. */
     private boolean toggling;
+    /**
+     * Whether the patch check is armed, which turns every smothered-patch mark on the board loud
+     * (see {@link #smotherMark}). Unlike {@link #ghost}, {@link #demolishing} and {@link
+     * #toggling} this is a view state and not a tool: it changes nothing about what a click does,
+     * so no code path outside {@link #setPatchCheck} reads it, and it deliberately survives the
+     * ESCAPE/right-click that clears all three of those.
+     */
+    private boolean patchCheck;
     /** Board cell currently under the mouse, or {@code -1, -1} when the pointer is outside the grid. */
     private int hoverX = -1, hoverY = -1;
     /**
@@ -108,6 +123,12 @@ public final class BoardPanel extends JComponent {
     public void setDemolishing(boolean on)     { demolishing = on; updateCursor(); repaint(); }
     /** Toggles the power-switch-tool preview. Triggers a repaint and updates the pointer (see {@link #updateCursor()}). */
     public void setToggling(boolean on)        { toggling = on; updateCursor(); repaint(); }
+    /**
+     * Turns the patch check on or off (see {@link #patchCheck}). No {@link #updateCursor()} call,
+     * unlike the two tool setters above: the pointer keeps its plain crosshair because this
+     * arms nothing — the board still places, dismantles or taps exactly as it did before.
+     */
+    public void setPatchCheck(boolean on)      { patchCheck = on; repaint(); }
     /**
      * Records SHIFT going down or up (see {@link #shiftHeld}). Does nothing at all unless the
      * state actually changed, since this is driven by key bindings that autorepeat while SHIFT
@@ -267,6 +288,13 @@ public final class BoardPanel extends JComponent {
             if (grp.type == Machine.CORE) coreRipple(g, r, t);
         }
 
+        // Smothered patches, drawn here rather than in the ore pass at the top: the machine art
+        // fills its own cell, so a mark painted with the ore would be buried under the very
+        // machine it is complaining about. See Engine#smothered for the rule itself.
+        for (int i = 0; i < Board.W * Board.H; i++)
+            if (engine.smothered(i))
+                smotherMark(g, ox + Board.xOf(i) * cs, oy + Board.yOf(i) * cs, cs, b.ore[i], t, patchCheck);
+
         ghostPreview(g, ox, oy, cs);
         rulers(g, ox, oy, cs, m);
 
@@ -298,6 +326,54 @@ public final class BoardPanel extends JComponent {
             double ry = py + cs * 0.62 + (i / 3) * gap;
             g.fill(new Ellipse2D.Double(rx, ry, d, d));
         }
+    }
+
+    /**
+     * Marks one cell whose machine is standing on ore it cannot mine (see {@link
+     * Engine#smothered(int)}): a crossed-out ore pip in the top-right corner, small enough to
+     * read as a survey annotation on top of the artwork rather than as damage to it. The pip
+     * takes the buried ore's own colour and the slash across it is {@link Theme#HOT}, so the
+     * badge says both "ore here" and "not being dug" without any text.
+     *
+     * <p>With {@code loud} set — the patch check armed from the BUILD tab or the O key — the same
+     * cell also gets a dashed frame and a wash in a lifted version of the ore colour, pulsed
+     * against the frame clock {@code t} the way every other effect in this class is (see the
+     * class Javadoc on the ad hoc tween approach). The colour is the ore's and not {@link
+     * Theme#HOT} or {@link Theme#AMBER} on purpose: those two already mean "no power" and
+     * "switched off" everywhere else on this board, and a smothered patch is neither.
+     *
+     * <p>Which ore it is deliberately goes unlabelled, even though the cell's own {@link Res#tag}
+     * is buried under the machine by now: this mark is per-cell, while {@link #label}'s status
+     * line and name plate belong to a whole fused group and are anchored to that group's corners,
+     * so text added here would sooner or later be drawn straight through theirs. The frame carries
+     * the ore's colour, and hovering the block spells the rest out in the status bar.
+     *
+     * @param loud whether the patch check is armed, which promotes the corner badge to a
+     *             full-cell highlight visible from across the board
+     */
+    private void smotherMark(Graphics2D g, double px, double py, double cs, Res ore, double t, boolean loud) {
+        Color lifted = Theme.mix(ore.color, Theme.CHALK, 0.35);
+        if (loud) {
+            double pulse = 0.5 + 0.5 * Math.sin(t * 3.2);
+            g.setColor(Theme.alpha(lifted, (int) (48 + 44 * pulse)));
+            g.fill(new Rectangle2D.Double(px, py, cs, cs));
+            g.setColor(Theme.alpha(lifted, (int) (175 + 80 * pulse)));
+            g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f,
+                    new float[]{4f, 3f}, (float) (t * 6)));
+            g.draw(new Rectangle2D.Double(px + 1.5, py + 1.5, cs - 3, cs - 3));
+        }
+
+        double d = Math.max(7, cs * (loud ? 0.32 : 0.26));
+        double bx = px + cs - d - 2, by = py + 2;
+        g.setColor(new Color(0, 0, 0, 165));
+        g.fill(new Ellipse2D.Double(bx, by, d, d));
+        g.setStroke(new BasicStroke((float) Math.max(1.0, d * 0.11)));
+        g.setColor(Theme.alpha(lifted, 235));
+        g.draw(new Ellipse2D.Double(bx, by, d, d));
+        g.fill(new Ellipse2D.Double(bx + d * 0.34, by + d * 0.34, d * 0.32, d * 0.32));
+        g.setColor(Theme.alpha(Theme.HOT, 245));
+        g.setStroke(new BasicStroke((float) Math.max(1.2, d * 0.16), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(new Line2D.Double(bx + d * 0.2, by + d * 0.8, bx + d * 0.8, by + d * 0.2));
     }
 
     /**
@@ -431,6 +507,11 @@ public final class BoardPanel extends JComponent {
         g.setColor(Theme.alpha(ok ? Theme.AMBER : Theme.HOT, 190));
         g.setStroke(new BasicStroke(1.4f));
         g.draw(new Rectangle2D.Double(px + 0.5, py + 0.5, cs - 1, cs - 1));
+        // A legal placement can still be a waste of a patch. The square stays amber — this is
+        // allowed, and sometimes the only way to wire past a vein — but it gets the same badge
+        // the cell would wear afterwards, so the trade is visible before the click, not after.
+        if (ok && engine.wouldSmother(ghost, hoverX, hoverY))
+            smotherMark(g, px, py, cs, b.ore[i], clock(), false);
     }
 
     /**

@@ -34,6 +34,20 @@ public record Spec(String label, String abbr, Map<Res, Double> cost, double draw
         return new Spec(label, abbr, cost, draw, role, tech, false, false, false, blurb);
     }
 
+    /**
+     * Whether this machine extracts ore from the cell it stands on.
+     *
+     * <p>Derived from the {@link Role} rather than stored as another flag, so it cannot drift out
+     * of step with what the machine actually does each tick: a {@link Role.Mine} is the only role
+     * that reads the ore under its own cells. Shared by everything that has to tell a digger from
+     * a squatter — {@link Fusion#layout} (which buckets rigs by the ore they sit on), {@link
+     * Engine#smothered(int)} (which flags every other machine parked on ore), and the build
+     * panel's copy.
+     *
+     * @return {@code true} for a mining machine, {@code false} for everything else
+     */
+    public boolean mines() { return role instanceof Role.Mine; }
+
     /** @return a copy of this spec with {@code oreOnly} set, restricting placement to matching ore tiles. */
     public Spec onOre()   { return new Spec(label, abbr, cost, draw, role, tech, true, smelter, lab, blurb); }
     /** @return a copy of this spec with {@code smelter} set, marking it for smelter-wide bonuses. */

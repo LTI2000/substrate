@@ -1,6 +1,7 @@
 package substrate;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -554,6 +555,55 @@ public final class Engine {
     public boolean unlocked(Machine m) {
         Tech t = m.spec().tech();
         return t == null || board.has(t);
+    }
+
+    /**
+     * Whether the machine standing on cell {@code i} is parked on an ore patch it cannot mine —
+     * a pylon, furnace, burner or collector sitting where a rig could have been. Nothing in the
+     * simulation forbids it: {@link #place} only rejects the opposite mistake (a rig on bare
+     * rock), so the cost is silent and permanent-looking, every second of ore that cell never
+     * yields. This is the query behind the board's patch marks and the BUILD tab's patch check,
+     * and the whole rule lives here rather than in the renderer that draws it.
+     *
+     * <p>Three cases are deliberately not reported, because none of them is a mistake the player
+     * could undo: the {@link Machine#CORE}, which is planted dead centre by the survey and can
+     * never be moved off whatever is under it; the {@link Machine#MONOLITH}, which {@link
+     * #collapse()} stamps across half the claim on purpose; and any cell outside the current
+     * claim, where the ore is only a faint unsurveyed trace (see {@link Board#inClaim}) and so
+     * isn't a patch anyone knowingly buried.
+     *
+     * @param i flat cell index, as built by {@link Board#idx}
+     */
+    public boolean smothered(int i) { return smothers(board.cell[i], i); }
+
+    /**
+     * The same question as {@link #smothered(int)}, asked one click early: whether placing
+     * {@code m} at {@code (x, y)} would leave it sitting on ore it cannot mine. Drives the
+     * board's placement ghost, so the warning arrives while the cell is still empty instead of
+     * only once the machine is down and paid for.
+     */
+    public boolean wouldSmother(Machine m, int x, int y) { return smothers(m, Board.idx(x, y)); }
+
+    /**
+     * Every {@link #smothered(int)} cell on the board, in flat-index order — which is reading
+     * order, left to right and top to bottom, so a list of grid references built from this comes
+     * out sorted the way the board is scanned by eye.
+     *
+     * @return the flat indices of every smothered cell; empty if the site is clean
+     */
+    public int[] smotheredCells() {
+        int[] found = new int[Board.W * Board.H];
+        int n = 0;
+        for (int i = 0; i < found.length; i++) if (smothered(i)) found[n++] = i;
+        return Arrays.copyOf(found, n);
+    }
+
+    /** The one rule behind {@link #smothered(int)} and {@link #wouldSmother}; see the former for why each clause is there. */
+    private boolean smothers(Machine m, int i) {
+        return m != null && m != Machine.CORE && m != Machine.MONOLITH
+                && !m.spec().mines()
+                && board.ore[i] != null
+                && board.inClaim(Board.xOf(i), Board.yOf(i));
     }
 
     /**

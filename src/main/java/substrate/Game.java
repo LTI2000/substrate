@@ -115,6 +115,12 @@ public final class Game implements BoardPanel.Handler {
      * since {@link #hintText()}'s candidate strings aren't exposed as an enumerable list.
      */
     private static final int HINT_H = 84;
+    /**
+     * How many smothered-patch grid references {@link #reportSmothered()} spells out before
+     * falling back to a "+N more" tail. Six fits the status bar comfortably next to the count and
+     * the closing note; the board's own marks carry the rest.
+     */
+    private static final int SMOTHER_REFS = 6;
 
     /** The simulation this UI is wired to; owns the board and all game rules. */
     private final Engine engine;
@@ -167,6 +173,14 @@ public final class Game implements BoardPanel.Handler {
     private boolean demolishing;
     /** Whether the board is in power-switch mode (click a machine to toggle its whole block on/off). */
     private boolean toggling;
+    /**
+     * Whether the patch check is armed: the board's smothered-patch marks go loud and the status
+     * bar carries the tally. Sits with {@code demolishing}/{@code toggling} in the BUILD tab's
+     * Tools row and toggles the same way, but is not a tool — it arms nothing, so it neither
+     * clears nor is cleared by the other two, and {@link #clearSelection()} leaves it alone (see
+     * {@link #togglePatchCheck()}).
+     */
+    private boolean patchCheck;
     /** Wall-clock timestamp of the last simulation tick, used to compute {@code dt} in {@link #start()}. */
     private long lastTick = System.nanoTime();
     /** Set by {@link #hovered} whenever the pointer is over the board; currently unread elsewhere but kept for future use. */
@@ -438,6 +452,12 @@ public final class Game implements BoardPanel.Handler {
                 + "Off machines draw no power and make nothing, but stay built.");
         powerIcon.setBounds(TAB_PAD + toolSize + toolGap, y, toolSize, toolSize);
         panel.add(powerIcon);
+
+        var patchIcon = new ToolIcon("PATCH", Game::paintPatchGlyph, () -> patchCheck, this::togglePatchCheck);
+        patchIcon.setToolTipText("Patch check (O): marks every ore patch with a machine on top that "
+                + "cannot mine it. A view, not a tool - it changes nothing about what a click does.");
+        patchIcon.setBounds(TAB_PAD + (toolSize + toolGap) * 2, y, toolSize, toolSize);
+        panel.add(patchIcon);
         y += toolSize + 10;
 
         var machinesLabel = new SectionLabel("Machines");
@@ -655,8 +675,8 @@ public final class Game implements BoardPanel.Handler {
 
     /**
      * Binds window-wide keyboard shortcuts (SPACE = tap core, ESCAPE = clear everything, D =
-     * toggle dismantle, P = toggle power switch, SHIFT down/up = keep the board's single-cell
-     * dismantle preview in step with the modifier) onto {@code
+     * toggle dismantle, P = toggle power switch, O = toggle the patch check, SHIFT down/up = keep
+     * the board's single-cell dismantle preview in step with the modifier) onto {@code
      * root}'s input/action maps, active whenever the containing window has focus, regardless of
      * which child component has it. Also installs a window-wide right-click listener (see
      * {@link #clearSelection()}) that clears everything exactly like ESCAPE does, from anywhere
@@ -711,6 +731,10 @@ public final class Game implements BoardPanel.Handler {
                 refresh();
             }
         });
+        im.put(KeyStroke.getKeyStroke("O"), "patches");
+        am.put("patches", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { togglePatchCheck(); }
+        });
         // SHIFT isn't a command of its own — it modifies the dismantle click into a single-cell
         // one. The board already reads the modifier off each mouse event, so these two bindings
         // exist purely so the preview switches the moment SHIFT goes down or up, even if the
@@ -724,6 +748,54 @@ public final class Game implements BoardPanel.Handler {
         am.put("shiftUp", new AbstractAction() {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { boardPanel.setShiftHeld(false); }
         });
+    }
+
+    /**
+     * Flips the patch check and says what it found. Shared by the PATCH tile and the O shortcut,
+     * the same way {@link #clearSelection()} is shared by ESCAPE and right-click.
+     *
+     * <p>Deliberately not symmetrical with the D and P handlers next to it in {@link #bindKeys}:
+     * those three arm a click, so each one disarms the other two. This arms nothing — it only
+     * changes how the board is drawn — so it leaves {@link #selected}, {@code demolishing} and
+     * {@code toggling} exactly as they were, and can be left on while building or dismantling,
+     * which is the point of it. It still switches to MAP, since that is where its marks are.
+     */
+    private void togglePatchCheck() {
+        patchCheck = !patchCheck;
+        boardPanel.setPatchCheck(patchCheck);
+        if (patchCheck) showBoard();
+        reportSmothered();
+        refresh();
+    }
+
+    /**
+     * Puts the patch check's finding in the status bar: how many patches are currently smothered
+     * and the grid references of the first {@link #SMOTHER_REFS} of them, or an all-clear.
+     *
+     * <p>Only listed up to a cap, and named by {@link Board#where(int)} rather than drawn as a
+     * separate list panel, because the marks on the board are the real readout — this line exists
+     * so a player who armed the check while looking at the research page, or whose smothered cell
+     * is behind a big fused block, still gets told the count and where to look.
+     */
+    private void reportSmothered() {
+        if (!patchCheck) {
+            status.set(List.of(Ui.Seg.of("Patch check off.", Theme.DIM)));
+            return;
+        }
+        int[] cells = engine.smotheredCells();
+        if (cells.length == 0) {
+            status.set(List.of(Ui.Seg.of("Patch check", Theme.CHALK),
+                    Ui.Seg.of("  every surveyed patch is either clear or being mined.", Theme.DIM)));
+            return;
+        }
+        var refs = new ArrayList<String>();
+        for (int k = 0; k < Math.min(cells.length, SMOTHER_REFS); k++) refs.add(Board.where(cells[k]));
+        var out = new ArrayList<Ui.Seg>();
+        out.add(Ui.Seg.of(cells.length + (cells.length == 1 ? " patch smothered" : " patches smothered"), Theme.AMBER));
+        out.add(Ui.Seg.of("  " + String.join(", ", refs), Theme.CHALK));
+        if (cells.length > refs.size()) out.add(Ui.Seg.of(" +" + (cells.length - refs.size()) + " more", Theme.DIM));
+        out.add(Ui.Seg.of("  - a rig there would be digging instead.", Theme.DIM));
+        status.set(out);
     }
 
     /**
@@ -743,6 +815,11 @@ public final class Game implements BoardPanel.Handler {
      * Deselects the armed machine and exits dismantle/power-switch mode, clearing the board's
      * preview overlays. Shared by the ESCAPE shortcut and the right-click-to-cancel listener
      * (see {@link #bindKeys}) so the two stay in lockstep.
+     *
+     * <p>"Everything" here means every armed tool, and the patch check is not one: it is a way of
+     * looking at the board, not something the next click will act on, so a right-click meant to
+     * put the cursor down would otherwise throw away the very marks the player was reading. It
+     * goes off the same way it came on, with O or its tile — see {@link #togglePatchCheck()}.
      */
     private void clearSelection() {
         selected = null;
@@ -862,7 +939,16 @@ public final class Game implements BoardPanel.Handler {
             out.add(Ui.Seg.of(" from " + g.area + " machines", Theme.DIM));
         }
         if (g.mult > 1.0001) out.add(Ui.Seg.of("  overclock +" + Fmt.pct(g.mult - 1), Theme.AMBER));
-        if (g.ore != null) out.add(Ui.Seg.of("  " + g.ore.lower() + " richness " + String.format("%.2f", g.richness), Theme.DIM));
+        // Group.ore is set for anything standing over ore, mining machine or not (see
+        // Fusion#make), so the same field means two different things depending on the machine:
+        // for a rig it is the seam being worked and its richness is the multiplier on output; for
+        // everything else it is a patch being sat on, and quoting an averaged "richness" for it
+        // would read as a benefit rather than the loss it is.
+        if (g.ore != null && spec.mines()) {
+            out.add(Ui.Seg.of("  " + g.ore.lower() + " richness " + String.format("%.2f", g.richness), Theme.DIM));
+        } else {
+            out.addAll(smotherNote(g));
+        }
         // g.powered already folds g.enabled in (see Group#powered), so !g.enabled is checked
         // first to give the player the accurate reason rather than always blaming the link.
         if (!g.enabled) {
@@ -877,6 +963,28 @@ public final class Game implements BoardPanel.Handler {
         String line = boardPanel.statusLine(g);
         if (line != null) out.add(Ui.Seg.of("  " + line, Theme.ICE));
         return out;
+    }
+
+    /**
+     * The "you are sitting on ore" clause of {@link #inspect(Group)}, for a block that cannot
+     * mine what is underneath it (see {@link Engine#smothered(int)}). Counts the block's own
+     * smothered cells rather than just reporting {@link Group#ore}, because a fused block can
+     * straddle a vein and cover any number of ore cells — a 3x3 furnace over two ore cells is
+     * two patches lost, and the number is the part that decides whether it is worth rebuilding
+     * somewhere else.
+     *
+     * @return one amber segment, or nothing at all when the block covers no ore it is wasting
+     */
+    private List<Ui.Seg> smotherNote(Group g) {
+        int n = 0, first = -1;
+        for (int i : g.cells)
+            if (engine.smothered(i)) {
+                n++;
+                if (first < 0) first = i;
+            }
+        if (n == 0) return List.of();
+        String what = n == 1 ? "an " + engine.board.ore[first].lower() + " patch" : n + " ore patches";
+        return List.of(Ui.Seg.of("  smothering " + what, Theme.AMBER));
     }
 
     /**
@@ -1028,6 +1136,14 @@ public final class Game implements BoardPanel.Handler {
         if (!b.has(Tech.SCIENCE)) return "Steel and circuits lead to the Research Lab, which makes data. Data unlocks everything after that.";
         if (!b.has(Tech.TERR1)) return "Data buys territory. A bigger claim means room for bigger rectangles.";
         if (!b.has(Tech.OVERCLOCK)) return "Overclock Nodes multiply every block they touch, and their boost scales with their own fusion.";
+        // Last before the evergreen tip, not earlier: a smothered patch can persist for hours, and
+        // a check high up this list would pin the hint box there and stall the tutorial chain
+        // behind it. Down here it only ever displaces the generic advice.
+        int smothered = engine.smotheredCells().length;
+        if (smothered > 0)
+            return smothered == 1
+                    ? "One ore patch is smothered: a machine that cannot mine is parked on it. Press O to mark it, then dismantle to free the patch."
+                    : smothered + " ore patches are smothered: machines that cannot mine are parked on them. Press O to mark them, then dismantle to free the ore.";
         return "Bigger rectangles beat more rectangles: one 4x4 block out-produces four separate 2x2 blocks by four times.";
     }
 
@@ -1187,6 +1303,31 @@ public final class Game implements BoardPanel.Handler {
         g.setStroke(new BasicStroke((float) (rad * 0.34), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.draw(new Arc2D.Double(cx - rad, cy - rad, rad * 2, rad * 2, 145, 250, Arc2D.OPEN));
         g.draw(new Line2D.Double(cx, cy - rad * 1.3, cx, cy - rad * 0.1));
+    }
+
+    /**
+     * {@link ToolIcon} glyph for the patch check: an ore patch drawn the way the board draws one
+     * — a cell outline with {@link BoardPanel}'s richness pips inside it — with a {@link
+     * Theme#HOT} slash across the lot. Quotes the board's own vocabulary rather than inventing a
+     * pictogram, so the tile reads as "about those coloured cells" before its tooltip is ever
+     * hovered. Pips are drawn in {@link Res#IRON_ORE}'s colour as a stand-in for ore in general,
+     * the same representative-ore trick {@link MachineIcon} uses for its ore-only previews.
+     */
+    private static void paintPatchGlyph(Graphics2D g, Rectangle2D r) {
+        double side = Math.min(r.getWidth(), r.getHeight()) * 0.82;
+        double x = r.getCenterX() - side / 2, y = r.getCenterY() - side / 2;
+        g.setColor(Theme.alpha(Res.IRON_ORE.color, 46));
+        g.fill(new Rectangle2D.Double(x, y, side, side));
+        g.setColor(Theme.alpha(Res.IRON_ORE.color, 170));
+        g.setStroke(new BasicStroke((float) Math.max(1.0, side * 0.055)));
+        g.draw(new Rectangle2D.Double(x, y, side, side));
+        double d = side * 0.16, gap = d * 1.7;
+        g.setColor(Theme.alpha(Res.IRON_ORE.color, 225));
+        for (int i = 0; i < 3; i++)
+            g.fill(new Ellipse2D.Double(x + side / 2 - gap - d / 2 + i * gap, y + side * 0.56, d, d));
+        g.setColor(Theme.alpha(Theme.HOT, 235));
+        g.setStroke(new BasicStroke((float) Math.max(1.6, side * 0.11), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(new Line2D.Double(x + side * 0.1, y + side * 0.9, x + side * 0.9, y + side * 0.1));
     }
 
     /**
@@ -1636,7 +1777,7 @@ public final class Game implements BoardPanel.Handler {
         private List<String[]> sections() {
             return List.of(
                 new String[]{"The site",
-                    "The core sits at H8. Everything you build has to form one connected mass with it: machines pass power to whatever they touch, orthogonally. A machine that loses contact stops dead. Conduit Pylons are the cheap way to reach a distant patch."},
+                    "The core sits at H8. Everything you build has to form one connected mass with it: machines pass power to whatever they touch, orthogonally. A machine that loses contact stops dead. Conduit Pylons are the cheap way to reach a distant patch - but anything standing on an ore patch that cannot mine it wastes the patch, so every such cell is marked with a crossed-out ore pip, and the patch check (O) lights all of them up at once."},
                 new String[]{"Fusion",
                     "Any solid rectangle of identical machines at least 2x2 merges into a single machine. Its output is multiplied by area to the power of "
                     + String.format("%.2f", engine.exponent())
@@ -1650,7 +1791,7 @@ public final class Game implements BoardPanel.Handler {
                 new String[]{"Collapse",
                     "Once you've won, COLLAPSE consumes every machine on the board and refuses them into a single Monolith across the northern half of your claim - the same fusion rule as any other block, applied to the whole site at once. Resources, research and the claim survive; only what stands on the ground changes, and the southern half stays free to build on. It's repeatable: extend the claim, rebuild, collapse again for a bigger Monolith."},
                 new String[]{"Controls",
-                    "The main panel switches between MAP, the site itself, and RESEARCH, the tech tree; picking a machine or a tool jumps back to MAP so you have somewhere to click. This panel and the build palette stay put either way. Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. Escape, or a right-click anywhere, clears everything at once - the armed machine included. The site saves itself every twenty seconds."});
+                    "The main panel switches between MAP, the site itself, and RESEARCH, the tech tree; picking a machine or a tool jumps back to MAP so you have somewhere to click. This panel and the build palette stay put either way. Pick a machine, then click or drag across empty cells; clicking the same one again keeps it armed, it does not deselect. Space taps the core. D toggles dismantle, which returns half; a plain click scraps the whole fused block, shift-click takes out just the one cell you clicked, so you can trim a block back into shape. P toggles the power switch, which pauses a block without demolishing it. O toggles the patch check, which lights up every ore patch with a machine on top that cannot mine it - a rig belongs there instead. Escape, or a right-click anywhere, clears everything at once - the armed machine included, though not the patch check, which is a view rather than a tool. The site saves itself every twenty seconds."});
         }
 
         /**

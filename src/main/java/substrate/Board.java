@@ -79,6 +79,18 @@ public final class Board {
     /** @return the y coordinate encoded in flat index {@code i}. */
     public static int yOf(int i)        { return i / W; }
 
+    /**
+     * Spreadsheet-style grid reference for cell {@code i}, e.g. {@code "C4"} — the label the
+     * board's rulers print and the one every readout names a cell by.
+     *
+     * <p>Converts the column to a letter with raw {@code (char) ('A' + x)} arithmetic, which only
+     * works while the board stays inside a single letter's worth of columns ({@link #W} = 15, so
+     * {@code A}-{@code O}); past 26 it would silently produce garbage rather than {@code AA}.
+     * {@link Group#where()} delegates here so a group and a bare cell can never disagree about
+     * how a coordinate is spelled.
+     */
+    public static String where(int i) { return (char) ('A' + xOf(i)) + String.valueOf(yOf(i) + 1); }
+
     /** @return current stock of {@code r}. */
     public double get(Res r)            { return res.get(r); }
     /** Overwrites the stock of {@code r} to exactly {@code v}. */

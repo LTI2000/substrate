@@ -111,7 +111,7 @@ public final class Fusion {
         for (int i = 0; i < Board.W * Board.H; i++) {
             Machine m = b.cell[i];
             if (m == null || m == Machine.CORE) continue;
-            boolean rig = m.spec().role() instanceof Role.Mine;
+            boolean rig = m.spec().mines();
             String key = rig && b.ore[i] != null ? m.name() + ":" + b.ore[i].name() : m.name();
             byKind.computeIfAbsent(key, k -> new boolean[Board.W * Board.H])[i] = true;
             kindType.put(key, m);

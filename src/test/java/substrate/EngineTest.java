@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -362,5 +363,75 @@ class EngineTest {
 
         assertTrue(Arrays.stream(Res.values()).allMatch(r -> Double.isFinite(b.get(r))),
                 "no NaN or infinity anywhere");
+    }
+
+    /**
+     * A patch of coal with a pylon crossing it: the site as it looks when the player wired past a
+     * vein instead of mining it. Ore fills the 3x3 at (4,4)-(6,6); a rig covers one cell of it, a
+     * pylon crosses another, and one cell is left bare.
+     */
+    private static Engine squattedSite() {
+        var e = TestSite.blank();
+        var b = e.board;
+        b.claim = 15;
+        for (int y = 4; y <= 6; y++)
+            for (int x = 4; x <= 6; x++) {
+                b.ore[Board.idx(x, y)] = Res.COAL;
+                b.rich[Board.idx(x, y)] = 2;
+            }
+        build(e, Machine.MINER, 4, 4, 1, 1);
+        build(e, Machine.PYLON, 5, 5, 1, 1);
+        e.recompute();
+        return e;
+    }
+
+    /**
+     * Checks the rule behind the patch check: a machine that cannot mine, standing on surveyed
+     * ore, is reported; a rig on the same ore is not, nor is that pylon once it stands on bare
+     * rock, nor an ore cell nobody has built on at all.
+     */
+    @Test
+    @DisplayName("a machine that cannot mine, sitting on ore, is reported as smothering it")
+    void smotheredPatchesAreFound() {
+        var e = squattedSite();
+        assertTrue(e.smothered(Board.idx(5, 5)), "the pylon is parked on coal");
+        assertFalse(e.smothered(Board.idx(4, 4)), "the rig is doing exactly what it should");
+        assertFalse(e.smothered(Board.idx(6, 6)), "nothing is standing on that cell yet");
+        assertFalse(e.smothered(Board.idx(0, 0)), "bare rock, no machine");
+        assertArrayEquals(new int[]{Board.idx(5, 5)}, e.smotheredCells());
+
+        assertTrue(e.wouldSmother(Machine.PYLON, 6, 6), "asked before the click, same answer");
+        assertFalse(e.wouldSmother(Machine.MINER, 6, 6), "a rig there would be digging");
+        assertFalse(e.wouldSmother(Machine.PYLON, 0, 0), "no ore under it");
+
+        build(e, Machine.PYLON, 7, 6, 1, 1);
+        e.recompute();
+        assertArrayEquals(new int[]{Board.idx(5, 5)}, e.smotheredCells(), "a pylon on bare rock costs nothing");
+    }
+
+    /**
+     * Checks the three cases the check stays quiet about, none of them a mistake the player could
+     * undo: ore outside the claim (only an unsurveyed trace), the core (planted by the survey and
+     * unmovable), and the Monolith that {@link Engine#collapse()} stamps across the claim on
+     * purpose.
+     */
+    @Test
+    @DisplayName("unsurveyed ore, the core and the Monolith are never reported")
+    void someSquattersAreNotMistakes() {
+        var e = squattedSite();
+        var b = e.board;
+        b.claim = 7;                                           // (4,4) and (5,5) survive, (2,2) does not
+        b.ore[Board.idx(2, 2)] = Res.COAL;
+        TestSite.put(b, 2, 2, 1, 1, Machine.PYLON, null);
+        assertFalse(e.smothered(Board.idx(2, 2)), "outside the claim it is not a patch yet");
+
+        b.ore[Board.idx(Board.CX, Board.CY)] = Res.IRON_ORE;
+        assertFalse(e.smothered(Board.idx(Board.CX, Board.CY)), "the core cannot be moved off it");
+
+        b.claim = 15;
+        b.won = true;
+        assertTrue(e.collapse());
+        assertEquals(Machine.MONOLITH, b.cell[Board.idx(5, 5)], "the collapse consumed the pylon");
+        assertEquals(0, e.smotheredCells().length, "the Monolith covers the whole claim on purpose");
     }
 }
