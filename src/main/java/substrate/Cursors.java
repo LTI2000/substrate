@@ -10,10 +10,13 @@ import java.awt.image.BufferedImage;
  * Graphics2D} calls rather than a loaded image (see {@link Art}'s class doc: there is no sprite
  * or asset pipeline anywhere in this codebase, and cursors are no exception).
  *
- * <p>{@link #DEMOLISH} and {@link #TOGGLE} deliberately echo the same pictograms as the DISM and
- * PWR {@code ToolIcon} glyphs ({@code Game#paintDismantleGlyph}/{@code Game#paintPowerGlyph}) —
- * the cursor is that tool's icon, scaled down and hollowed out into an outline reticle so it
- * still reads at pointer size and doesn't paint a solid block over whatever is underneath it.
+ * <p>{@link #DEMOLISH} and {@link #TOGGLE} draw the same pictograms, at the same proportions, as
+ * the DISM and PWR {@code ToolIcon} glyphs ({@code Game#paintDismantleGlyph}/{@code
+ * Game#paintPowerGlyph}) — the cursor is literally that tool's icon, so the button you press and
+ * the pointer it arms are the same drawing. Both pictograms are open outlines rather than filled
+ * shapes precisely so they work at pointer size without painting a solid block over whatever is
+ * underneath; the only thing the cursor adds is the dark halo of {@link #outlineThenColor}, a
+ * legibility device the tile doesn't need because its own wash is already dark.
  * {@link #POINT} has no equivalent tool icon; it's a plain crosshair in the same amber the ghost
  * placement preview uses, so the "no tool armed" pointer still belongs to the same palette.
  *
@@ -33,7 +36,7 @@ final class Cursors {
 
     /** No tool armed (including while a machine is armed for placement): a thin amber crosshair. */
     static final Cursor POINT = build("point", Cursors::paintPoint, Cursor.DEFAULT_CURSOR);
-    /** Demolish tool active: a red targeting reticle, echoing {@code paintDismantleGlyph}'s danger red. */
+    /** Demolish tool active: the DISM tool's own glyph, a red targeting reticle, in {@code paintDismantleGlyph}'s danger red. */
     static final Cursor DEMOLISH = build("demolish", Cursors::paintDemolish, Cursor.CROSSHAIR_CURSOR);
     /** Power-switch tool active: the same broken-ring-and-tick glyph as the PWR tool icon. */
     static final Cursor TOGGLE = build("toggle", Cursors::paintToggle, Cursor.HAND_CURSOR);
@@ -88,7 +91,7 @@ final class Cursors {
         g.fill(new Ellipse2D.Double(c - c * 0.06, c - c * 0.06, c * 0.12, c * 0.12));
     }
 
-    /** Targeting reticle: a ring with an X through it plus four outward tick marks, in {@link Theme#HOT} red. */
+    /** The DISM tool's own glyph (a ring with an X through it plus four outward tick marks), in {@link Theme#HOT} red. */
     private static void paintDemolish(Graphics2D g, double c) {
         double rad = c * 0.72, in = rad * 0.55, tickIn = rad * 1.05, tickOut = rad * 1.3;
         outlineThenColor(g, Theme.alpha(Theme.HOT, 235), 3.6f, 1.8f, () -> {

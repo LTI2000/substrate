@@ -3,6 +3,7 @@ package substrate;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.geom.Arc2D;
+import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
@@ -1084,22 +1085,27 @@ public final class Game implements BoardPanel.Handler {
     }
 
     /**
-     * {@link ToolIcon} glyph for Dismantle: a dark steel block with a bold rust-red "X" through
-     * it — a universal "this gets broken" pictogram, drawn in a fixed danger color regardless of
-     * whether the tool is currently armed (the tile's wash/border already carries that state, the
-     * same separation {@link MachineIcon} keeps between its {@link Art} preview and its own
-     * selection styling).
+     * {@link ToolIcon} glyph for Dismantle: a targeting reticle — a ring with an "X" through it
+     * plus four outward tick marks — in a fixed danger red regardless of whether the tool is
+     * currently armed (the tile's wash/border already carries that state, the same separation
+     * {@link MachineIcon} keeps between its {@link Art} preview and its own selection styling).
+     *
+     * <p>Same pictogram, at the same proportions, as {@code Cursors#paintDemolish}, so the tile
+     * and the cursor it arms are the same drawing — see {@link Cursors}' class doc.
      */
     private static void paintDismantleGlyph(Graphics2D g, Rectangle2D r) {
-        g.setColor(Theme.alpha(Theme.STEEL_DARK, 230));
-        g.fill(r);
-        g.setColor(new Color(0, 0, 0, 90));
-        g.draw(r);
+        double cx = r.getCenterX(), cy = r.getCenterY();
+        double rad = Math.min(r.getWidth(), r.getHeight()) * 0.5 * 0.72;
+        double in = rad * 0.55, tickIn = rad * 1.05, tickOut = rad * 1.3;
         g.setColor(Theme.alpha(Theme.HOT, 220));
-        g.setStroke(new BasicStroke((float) (r.getWidth() * 0.13), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        double in = r.getWidth() * 0.18;
-        g.draw(new Line2D.Double(r.getMinX() + in, r.getMinY() + in, r.getMaxX() - in, r.getMaxY() - in));
-        g.draw(new Line2D.Double(r.getMaxX() - in, r.getMinY() + in, r.getMinX() + in, r.getMaxY() - in));
+        g.setStroke(new BasicStroke((float) (rad * 0.16), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(new Ellipse2D.Double(cx - rad, cy - rad, rad * 2, rad * 2));
+        g.draw(new Line2D.Double(cx - in, cy - in, cx + in, cy + in));
+        g.draw(new Line2D.Double(cx + in, cy - in, cx - in, cy + in));
+        g.draw(new Line2D.Double(cx, cy - tickOut, cx, cy - tickIn));
+        g.draw(new Line2D.Double(cx, cy + tickIn, cx, cy + tickOut));
+        g.draw(new Line2D.Double(cx - tickOut, cy, cx - tickIn, cy));
+        g.draw(new Line2D.Double(cx + tickIn, cy, cx + tickOut, cy));
     }
 
     /**
